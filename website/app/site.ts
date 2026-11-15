@@ -1,5 +1,6 @@
 export const REPO = 'https://github.com/orionlize/penhold';
-export const DOCS = `${REPO}#readme`;
+export const DOCS = '/docs';
+export const INSTALL_DOC = '/docs/install';
 export const CHANGELOG = `${REPO}/commits/main`;
 export const LICENSES = `${REPO}/blob/main/THIRD_PARTY_NOTICES.md`;
 
