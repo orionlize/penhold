@@ -18,7 +18,7 @@ claude mcp add design -- node /绝对路径/penhold-mcp/dist/server/cli.js
 
 发布到 npm 后即为 `npx penhold-mcp`。首次调用时 stdio 代理会自动拉起守护进程（默认端口 4470，占用时递增），AI 调用绘制工具时自动用默认浏览器打开画布。
 
-也可直连守护进程的 Streamable HTTP 端点 `http://127.0.0.1:<port>/mcp`，请求头带 `Authorization: Bearer <token>`（端口与令牌见 `~/.design-mcp/daemon.json`）。
+也可直连守护进程的 Streamable HTTP 端点 `http://127.0.0.1:<port>/mcp`，请求头带 `Authorization: Bearer <token>`（端口与令牌见 `~/.penhold/daemon.json`）。
 
 ### 可选：宿主会话别名（Claude Code SessionStart hook）
 
@@ -45,7 +45,7 @@ claude mcp add design -- node /绝对路径/penhold-mcp/dist/server/cli.js
 
 | 变量 | 说明 |
 | --- | --- |
-| `DESIGN_MCP_HOME` | 数据目录，默认 `~/.design-mcp` |
+| `DESIGN_MCP_HOME` | 数据目录，默认 `~/.penhold`（旧版的 `~/.design-mcp` 首次运行时自动迁移过来） |
 | `DESIGN_MCP_PORT` | 起始端口，默认 4470 |
 | `DESIGN_MCP_CANVAS` | 固定绑定某个画布（绑定规则第 3 条） |
 | `DESIGN_MCP_NO_BROWSER=1` | 不自动打开浏览器（手动打开 URL） |
@@ -132,7 +132,7 @@ scripts/         开发辅助：import-presets.ts 生成内置预设目录，bui
   守护进程只给出路径与摘要，内容由 AI 用自己的读文件工具读取，所以 skill 引用的同目录文件也能读到。
 - **设计系统（参照 Claude Design）**：设计依据是一个与画布分开保存、同一项目共用的设计系统（`design_system` 工具，`src/core/designSystem.ts`、`src/server/systems.ts`）。
   - 内容：颜色按主题（亮 / 暗）各存一值并写明用途与对比度检查对象；字阶加组合文字样式（字号 + 行高 + 字重 + 字体，`text_styles` 给出可直接写进 style 的字段）；间距、圆角、阴影；组件定义；品牌说明（概念、母题、记忆点、形状、版式、不要做的事）。
-  - 存放：`~/.design-mcp/systems/<id>/`，含 `system.json` 与生成的 `README.md`（品牌手册，AI 先读它）、`tokens.css`（`:root` 为默认主题，其余主题写在 `[data-theme=…]`）、`tokens.json`（Claude Design 的令牌格式）。`systems/index.json` 记录各项目目录的默认系统。
+  - 存放：`~/.penhold/systems/<id>/`，含 `system.json` 与生成的 `README.md`（品牌手册，AI 先读它）、`tokens.css`（`:root` 为默认主题，其余主题写在 `[data-theme=…]`）、`tokens.json`（Claude Design 的令牌格式）。`systems/index.json` 记录各项目目录的默认系统。
   - 来源：`create` 由方向卡片生成（按风格原型的信息密度定字阶、间距与字重，自动推导另一种明暗，修正对比度）、由内置预设或画布现有令牌整理；`import` 从 CSS 变量（Tailwind v4 `@theme`、shadcn 的 HSL 三元组、`.dark` / `prefers-color-scheme` 暗色块）或 Claude Design 的 tokens.json 导入，取值照抄，不达标的对比度只列出不改。
   - 安装：画布记录 `session.json` 的 `system`（id、版本、主题），选定主题展开成扁平令牌写入 `doc.tokens`，系统里的组件一并复制。项目有默认系统时，新画布不再出方向卡片与问卷，首次写入（含 `design_plan`）时自动安装。`theme` 切换主题；`update` 按名字合并修改系统并重装到当前画布；对已安装系统的令牌直接 `tokens_set` 会返回 `system_drift` 提醒。
   - `save_components` 把画布里的组件存进系统；`export` 写到项目的 `design-system/`，提交进仓库后其他机器打开同一项目自动发现（版本更新的覆盖本机副本）。
@@ -163,7 +163,7 @@ scripts/         开发辅助：import-presets.ts 生成内置预设目录，bui
   - 尚未选定方向就调用 `tokens_set` 时，返回值带 `direction_reminder`。
 - **页面类型规范片段**：`design_plan` 按页面名与区块名识别页面类型，把 [guides/pages/](guides/pages/) 下对应的片段（登录、首页、看板、落地页、列表、详情、表单、个人中心、引导 / 结果页）随返回值的 `page_guides` 直接下发，内容是该类页面的几种构图方案与常见平庸写法。有本地设计规范时同样下发：品牌色与字体以本地规范为准，构图由片段补充。新增类型：在 `guides/pages/` 加 `<type>.md`，并在 [src/server/pageGuides.ts](src/server/pageGuides.ts) 的 `TYPES` 中登记匹配规则。
 - **重新构建后自动升级守护进程**：守护进程在 `daemon.json` 中记录构建标识（编译产物的最新修改时间）；代理或 `penhold-mcp open` 发现守护进程来自更旧的构建时会平滑重启它（只升级不降级）。
-- **画布无需令牌**：画布页面、管理 API 与画布 WebSocket 直接打开即可（`http://127.0.0.1:<port>/c/<canvasId>`），靠只监听 127.0.0.1 + 校验 Host 与 Origin 防护；只有 MCP 端点（`/mcp`）需要令牌，由 stdio 代理自动携带（`~/.design-mcp/token`，权限 600）。
+- **画布无需令牌**：画布页面、管理 API 与画布 WebSocket 直接打开即可（`http://127.0.0.1:<port>/c/<canvasId>`），靠只监听 127.0.0.1 + 校验 Host 与 Origin 防护；只有 MCP 端点（`/mcp`）需要令牌，由 stdio 代理自动携带（`~/.penhold/token`，权限 600）。
 
 ## Tweaks（可调节项）
 
