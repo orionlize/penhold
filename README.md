@@ -69,6 +69,7 @@ src/proxy.ts     stdio 薄代理（守护进程重启后自动重放握手）
 src/hook.ts      宿主会话 hook
 web/src/         画布前端：iframe 渲染与增量更新、选中与盒模型覆盖层、属性面板、图层树、页面内截图与渲染检查
 guides/          内置设计规范（default/SKILL.md）、页面类型规范片段（pages/*.md）、设计方向示例稿（examples/*.json）与产品类型预设目录（catalog.json）
+website/         官网（Next.js，独立依赖，部署见 website/README.md）
 scripts/         开发辅助：import-presets.ts 生成内置预设目录，build-examples.ts 生成各设计方向的示例稿，open.ts 新建画布、call.ts 调用单个工具、e2e-login.ts 端到端出稿演示、e2e-plan.ts 页面规划与绘制过程演示，e2e-states.ts 交互状态检查演示
 ```
 
