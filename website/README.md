@@ -10,6 +10,7 @@ npm run build
 ```
 
 - 页面：`app/page.tsx`（文案与区块数据都在文件顶部）
+- 文档：`app/docs/`，每页一个 `<slug>/page.tsx`；目录与上一页 / 下一页由 `app/docs/nav.ts` 统一维护，新增页面先在这里登记；样式在 `app/docs/docs.css`
 - 样式：`app/globals.css`（`:root` 令牌，暗色跟随系统）
 - `next.config.ts` 固定了 `turbopack.root`，避免 Next 把上层仓库当作项目根、误把 `src/proxy.ts` 当成 proxy 中间件。
 

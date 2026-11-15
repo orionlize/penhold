@@ -2,7 +2,7 @@ import { CopyButton } from './components/copy-button';
 import { Demo } from './components/demo';
 import { FeatureExplorer } from './components/features';
 import { ReplayButton } from './components/replay-button';
-import { ADD_CMD, CHANGELOG, CLIENTS, DOCS, LICENSES, NPX_CMD, REPO } from './site';
+import { ADD_CMD, CHANGELOG, CLIENTS, DOCS, INSTALL_DOC, LICENSES, NPX_CMD, REPO } from './site';
 
 /** 随 <html data-h> 轮换的四个阶段：0 改字距 · 3 自检 · 2 插入副标题 · 1 换令牌 */
 function Phases({ items }: { items: [React.ReactNode, React.ReactNode, React.ReactNode, React.ReactNode] }) {
@@ -396,7 +396,7 @@ export default function Home() {
                 </p>
               </div>
               <div className="install-actions">
-                <a className="btn-primary" href={`${REPO}#快速开始`}>
+                <a className="btn-primary" href={INSTALL_DOC}>
                   <i className="btn-caret" aria-hidden="true" />
                   安装 MCP
                 </a>
@@ -465,7 +465,7 @@ export default function Home() {
             </ol>
             <Clients />
             <div className="m-actions">
-              <a className="btn-primary" href={`${REPO}#快速开始`}>
+              <a className="btn-primary" href={INSTALL_DOC}>
                 <i className="btn-caret" aria-hidden="true" />
                 安装 MCP
               </a>

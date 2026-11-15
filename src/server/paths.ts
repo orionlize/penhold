@@ -4,7 +4,20 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-export const HOME = process.env.DESIGN_MCP_HOME ?? path.join(os.homedir(), '.design-mcp');
+/** 数据目录默认 ~/.penhold；旧版本用 ~/.design-mcp，首次运行时整体迁移过来，迁移失败则沿用旧目录。 */
+function defaultHome() {
+  const home = path.join(os.homedir(), '.penhold');
+  const legacy = path.join(os.homedir(), '.design-mcp');
+  if (!fs.existsSync(home) && fs.existsSync(legacy)) {
+    try {
+      fs.renameSync(legacy, home);
+    } catch {}
+    if (!fs.existsSync(home)) return legacy;
+  }
+  return home;
+}
+
+export const HOME = process.env.DESIGN_MCP_HOME ?? defaultHome();
 export const DAEMON_FILE = path.join(HOME, 'daemon.json');
 export const INDEX_FILE = path.join(HOME, 'index.json');
 export const CANVASES_DIR = path.join(HOME, 'canvases');

@@ -48,7 +48,7 @@ flowchart TB
         GW["画布网关<br/>静态资源 · WebSocket 同步<br/>选区 · 截图回传"]
         SER["渲染与导出<br/>节点树 → HTML/CSS 渲染器<br/>单文件 HTML 导出"]
     end
-    STORE["画布存储（~/.design-mcp/）<br/>design.json · ops.jsonl · assets/<br/>snapshots/ · session.json"]
+    STORE["画布存储（~/.penhold/）<br/>design.json · ops.jsonl · assets/<br/>snapshots/ · session.json"]
     AI -- "MCP 工具调用" --> MCP
     WEB <-- "WebSocket 操作流" --> GW
     MCP --> ENG
@@ -62,7 +62,7 @@ AI 的工具调用和用户的手动编辑汇入同一条操作管线；画布�
 
 ### 进程与启动
 
-- **守护进程（daemon）**：每台机器一个实例，持有所有已打开画布的文档状态，提供 HTTP（画布静态资源、导出下载）与 WebSocket（操作同步）。默认端口 4470，占用时递增，实际端口写入锁文件 `~/.design-mcp/daemon.json`。
+- **守护进程（daemon）**：每台机器一个实例，持有所有已打开画布的文档状态，提供 HTTP（画布静态资源、导出下载）与 WebSocket（操作同步）。默认端口 4470，占用时递增，实际端口写入锁文件 `~/.penhold/daemon.json`。
 - **MCP 入口**：客户端以 stdio 方式启动 `penhold-mcp`。该进程是薄代理：读取锁文件，守护进程不存在则拉起，然后把工具调用转发过去。这样多个 AI 会话可以共用一个画布服务，且浏览器地址稳定。同时支持直连守护进程的 Streamable HTTP 端点。
 - **画布 Web App**：地址为 `http://127.0.0.1:<port>/c/<canvasId>`。AI 调用绘制工具时，若没有画布页面连接，守护进程自动用默认浏览器打开该地址。
 - **生命周期**：没有任何 MCP 连接且没有浏览器连接超过 30 分钟后，守护进程自动退出；状态已全部落盘，下次启动按画布恢复。
@@ -363,7 +363,7 @@ AI 编码代理通过读取类工具拿到四样东西：结构、样式、设�
 
 ### 绑定规则
 
-首次绘制时守护进程生成 `canvasId`（UUID），并在全局索引 `~/.design-mcp/index.json` 中维护“宿主会话 id → canvasId”的别名表，一个画布可挂多个别名。MCP 连接建立后按以下顺序找回画布，命中即停：
+首次绘制时守护进程生成 `canvasId`（UUID），并在全局索引 `~/.penhold/index.json` 中维护“宿主会话 id → canvasId”的别名表，一个画布可挂多个别名。MCP 连接建立后按以下顺序找回画布，命中即停：
 
 1. **对话内自带（主路径，适用所有 MCP 客户端）**：`canvas_open` 的返回里带 `canvasId`，它因此留在对话历史中。恢复会话后 AI 从上下文读到它并传回 `canvas_open(canvas_id)`。只用标准工具调用，不依赖客户端特性。
 2. **别名命中（可选增强）**：客户端能提供宿主会话 id 时（如 Claude Code 的 SessionStart hook），上报的 id 在别名表中存在则直接绑定，省去 AI 传参。没有该机制的客户端不受影响。
@@ -378,7 +378,7 @@ AI 编码代理通过读取类工具拿到四样东西：结构、样式、设�
 
 ### 目录结构
 
-所有数据存放在用户目录：`~/.design-mcp/canvases/<canvasId>/`，不写入项目仓库。全局索引 `~/.design-mcp/index.json` 记录每个 `canvasId` 的标题、关联的工作目录和别名表。
+所有数据存放在用户目录：`~/.penhold/canvases/<canvasId>/`，不写入项目仓库。全局索引 `~/.penhold/index.json` 记录每个 `canvasId` 的标题、关联的工作目录和别名表。
 
 ```text
 <canvasId>/
@@ -402,7 +402,7 @@ AI 编码代理通过读取类工具拿到四样东西：结构、样式、设�
 ### 画布管理
 
 - 画布首页 `http://127.0.0.1:<port>/` 列出所有画布，支持重命名、复制、删除。
-- 删除为移入 `~/.design-mcp/trash/`，不直接抹除；不做自动过期清理。
+- 删除为移入 `~/.penhold/trash/`，不直接抹除；不做自动过期清理。
 - 画布目录自包含，可整体拷贝或打包迁移到另一台机器。
 
 ## 9. 非功能需求、里程碑与风险
@@ -449,7 +449,7 @@ AI 编码代理通过读取类工具拿到四样东西：结构、样式、设�
 | 宽高是否允许手动改 | 允许，归入盒模型 |
 | 分叉会话 | 共用同一个 `canvasId`，不复制画布 |
 | 一个会话几个画布 | 只允许编辑一个画布 |
-| 存储位置 | 用户目录 `~/.design-mcp/` |
+| 存储位置 | 用户目录 `~/.penhold/` |
 | 节点类型 | 由 LLM 在创建时给定，不预置集合 |
 | 渲染基元 | 第一期按四种基元（容器、文本、图片、输入）实现 |
 | 组件复用 | 同组件名即复用同一份定义 |
