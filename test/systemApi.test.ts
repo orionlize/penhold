@@ -7,9 +7,9 @@ import path from 'node:path';
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dm-sysapi-'));
 process.env.DESIGN_MCP_HOME = home;
 const { auditContrast, flattenSystem, lintSystem } = await import('../src/core/designSystem.ts');
-const { blankSystem, createSystem, deleteSystem, detailForUi, listForUi, sanitizeSystem, setProjectDefault, starterCards, updateSystem } = await import('../src/server/systemApi.ts');
-const { defaultSystem, loadSystem, saveSystem, systemDir } = await import('../src/server/systems.ts');
-const { Registry } = await import('../src/server/registry.ts');
+const { blankSystem, createSystem, deleteSystem, detailForUi, listForUi, sanitizeSystem, setProjectDefault, starterCards, updateSystem } = await import('../src/server/design/systemApi.ts');
+const { defaultSystem, loadSystem, saveSystem, systemDir } = await import('../src/server/design/systems.ts');
+const { Registry } = await import('../src/server/canvas/registry.ts');
 
 test('空白系统：亮暗两套主题，对比度与结构检查都通过', () => {
   for (const primary of [undefined, '#FACC15', '#111827', '#DB2777']) {

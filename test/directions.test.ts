@@ -1,13 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { archetypeIds, contrast, directionDetail, directionExample, recolor, suggestDirections } from '../src/server/directions.ts';
-import { catalog } from '../src/server/presets.ts';
-import { pageGuides, pageGuideText, pageTypeOf, pageTypes } from '../src/server/pageGuides.ts';
+import { archetypeIds, contrast, directionDetail, directionExample, recolor, suggestDirections } from '../src/server/design/directions.ts';
+import { catalog } from '../src/server/design/presets.ts';
+import { pageGuides, pageGuideText, pageTypeOf, pageTypes } from '../src/server/design/pageGuides.ts';
 import { validateNodeInput, validateTokens } from '../src/core/schema.ts';
 import { designCheckup } from '../src/core/designLint.ts';
 import { emptyDoc } from '../src/core/doc.ts';
 import type { Node } from '../src/core/types.ts';
-import { setInstalledFontsForTest } from '../src/server/localFonts.ts';
+import { setInstalledFontsForTest } from '../src/server/design/localFonts.ts';
 
 // 固定本机字体清单，结果不随运行环境变化
 const LOCAL_FONTS = ['Noto Sans CJK SC', 'Noto Serif CJK SC', 'Inter', 'Noto Sans Mono'];

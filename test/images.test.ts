@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { derivedThumbnail, fetchThumbnail, hitThumbnail, ImageSearchError, searchImages } from '../src/server/images.ts';
+import { derivedThumbnail, fetchThumbnail, hitThumbnail, ImageSearchError, searchImages } from '../src/server/design/images.ts';
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 

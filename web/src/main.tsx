@@ -1,7 +1,7 @@
 import { createRoot } from 'react-dom/client';
-import { Editor } from './Editor';
-import { Home } from './Home';
-import { SystemEditor } from './SystemEditor';
+import { Editor } from './editor/Editor';
+import { Home } from './pages/Home';
+import { SystemEditor } from './pages/SystemEditor';
 import './styles.css';
 import './theme'; // 主题默认跟随系统
 
