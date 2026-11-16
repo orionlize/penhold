@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { findDesignGuides } from '../src/server/guides.ts';
+import { findDesignGuides } from '../src/server/design/guides.ts';
 
 test('发现项目内设计 skill、设计文档与 DESIGN_MCP_GUIDES 指定的文件', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dm-guides-'));

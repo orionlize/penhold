@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { catalog, DEFAULT_GUIDE, defaultGuideText, matchPresets, presetDetail } from '../src/server/presets.ts';
+import { catalog, DEFAULT_GUIDE, defaultGuideText, matchPresets, presetDetail } from '../src/server/design/presets.ts';
 import { validateTokens } from '../src/core/schema.ts';
 
 test('内置规范与预设目录随包提供', () => {

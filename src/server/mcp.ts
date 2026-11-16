@@ -34,13 +34,13 @@ import { frameVars } from '../core/proto.js';
 import { exploreFrame, isDocFrame, lintProto, stateAfter, type Exploration, type NavOut, type ProtoWarning, type Step } from '../core/states.js';
 import { designCheckup, formatDesignNotes } from '../core/designLint.js';
 import type { Annotation, DesignDoc, Node, Op, Origin, ProbeResult, ProtoValue, ShotReport } from '../core/types.js';
-import { applyAnnotations } from './annotate.js';
-import { ingestSrc } from './assets.js';
-import { hitThumbnail, ImageSearchError, searchImages } from './images.js';
-import { Canvas, CanvasError } from './canvas.js';
-import { buildExport } from './export.js';
-import { findDesignGuides } from './guides.js';
-import { directionDetail, directionExample, recentUsage, suggestDirections, systemFromDirection, type DirectionCard } from './directions.js';
+import { applyAnnotations } from './canvas/annotate.js';
+import { ingestSrc } from './canvas/assets.js';
+import { hitThumbnail, ImageSearchError, searchImages } from './design/images.js';
+import { Canvas, CanvasError } from './canvas/canvas.js';
+import { buildExport } from './export/export.js';
+import { findDesignGuides } from './design/guides.js';
+import { directionDetail, directionExample, recentUsage, suggestDirections, systemFromDirection, type DirectionCard } from './design/directions.js';
 import {
   applyPatch,
   auditContrast,
@@ -54,12 +54,12 @@ import {
   type DesignSystem,
   type SystemPatch,
 } from '../core/designSystem.js';
-import { defaultSystem, exportSystem, listSystems, loadSystem, newSystemId, PROJECT_DIR_NAME, saveSystem, setDefaultSystem, summary as systemSummary } from './systems.js';
-import { pageGuides } from './pageGuides.js';
-import { COLOR_Q, colorSchemes, customBriefForm, defaultBriefForm, DIRECTION_Q, directionQuestion } from './brief.js';
-import { catalog, DEFAULT_GUIDE, defaultGuideText, matchPresets, presetDetail, presetSource } from './presets.js';
+import { defaultSystem, exportSystem, listSystems, loadSystem, newSystemId, PROJECT_DIR_NAME, saveSystem, setDefaultSystem, summary as systemSummary } from './design/systems.js';
+import { pageGuides } from './design/pageGuides.js';
+import { COLOR_Q, colorSchemes, customBriefForm, defaultBriefForm, DIRECTION_Q, directionQuestion } from './design/brief.js';
+import { catalog, DEFAULT_GUIDE, defaultGuideText, matchPresets, presetDetail, presetSource } from './design/presets.js';
 import { VERSION } from './paths.js';
-import type { Registry } from './registry.js';
+import type { Registry } from './canvas/registry.js';
 
 export interface SessionCtx {
   id: string;

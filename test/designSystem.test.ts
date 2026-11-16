@@ -9,10 +9,10 @@ process.env.DESIGN_MCP_HOME = home;
 const { contrast, ensureContrast, fromOklch, toOklch } = await import('../src/core/color.ts');
 const ds_ = await import('../src/core/designSystem.ts');
 const { auditContrast, applyPatch, flattenSystem, importCss, importTokensJson, lintSystem, renderReadme, systemCss, systemFromFlat, systemFromImport, textRecipe } = ds_;
-const { suggestDirections, systemFromDirection, archetypeIds } = await import('../src/server/directions.ts');
-const { catalog } = await import('../src/server/presets.ts');
-const { defaultSystem, exportSystem, loadSystem, newSystemId, saveSystem, setDefaultSystem, claudeTokens } = await import('../src/server/systems.ts');
-const { systemPage } = await import('../src/server/systemPage.ts');
+const { suggestDirections, systemFromDirection, archetypeIds } = await import('../src/server/design/directions.ts');
+const { catalog } = await import('../src/server/design/presets.ts');
+const { defaultSystem, exportSystem, loadSystem, newSystemId, saveSystem, setDefaultSystem, claudeTokens } = await import('../src/server/design/systems.ts');
+const { systemPage } = await import('../src/server/design/systemPage.ts');
 const { validateTokens } = await import('../src/core/schema.ts');
 
 test('OKLCH 往返换算与只调明度的对比度修正', () => {

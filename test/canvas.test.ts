@@ -8,10 +8,10 @@ const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dm-test-'));
 process.env.DESIGN_MCP_HOME = home;
 process.env.DESIGN_MCP_LOCK_IDLE_MS = '200';
 process.env.DESIGN_MCP_PLAN_IDLE_MS = '400';
-const { Canvas } = await import('../src/server/canvas.ts');
+const { Canvas } = await import('../src/server/canvas/canvas.ts');
 const { insertOps, updateOps } = await import('../src/core/edit.ts');
 const { validateNodeInput } = await import('../src/core/schema.ts');
-const { buildExport } = await import('../src/server/export.ts');
+const { buildExport } = await import('../src/server/export/export.ts');
 
 const ID = '11111111-2222-4333-8444-555555555555';
 
@@ -268,7 +268,7 @@ test('missingNotesHint: reminds about UI frames without AI interaction notes', a
 });
 
 test('design_annotate: AI notes are tagged, cross-frame arrows convert coordinates, user notes are protected', async () => {
-  const { applyAnnotations } = await import('../src/server/annotate.ts');
+  const { applyAnnotations } = await import('../src/server/canvas/annotate.ts');
   const c = new Canvas('22222222-2222-4333-8444-555555555555', { title: 'a', cwd: '/x' });
   await c.acquireLock('s1');
   c.commit('ai', [
@@ -310,7 +310,7 @@ test('design_annotate: AI notes are tagged, cross-frame arrows convert coordinat
 });
 
 test('design_annotate resolve: closes user comments only after the frame is self-checked', async () => {
-  const { applyAnnotations } = await import('../src/server/annotate.ts');
+  const { applyAnnotations } = await import('../src/server/canvas/annotate.ts');
   const c = new Canvas('22222222-2222-4333-8444-666666666666', { title: 'r', cwd: '/x' });
   await c.acquireLock('s1');
   c.commit('ai', [{ op: 'frame_create', index: 0, frame: { id: 'f1', name: 'A', width: 390, height: 'auto', root: { id: 'f1', type: 'page' } } }], { session: 's1' });
@@ -360,7 +360,7 @@ test('user baseline: first user edit records the prior value; reverting, undo an
 });
 
 test('set_theme 把系统的主题颜色写进画布并可撤销', async () => {
-  const { saveSystem } = await import('../src/server/systems.ts');
+  const { saveSystem } = await import('../src/server/design/systems.ts');
   const { systemFromFlat, deriveTheme, flattenSystem } = await import('../src/core/designSystem.ts');
   const ds = systemFromFlat({ 'color.bg': '#ffffff', 'color.fg': '#111111', 'color.primary': '#4f46e5' }, { id: 'th-sys', name: 'Th', device: 'mobile' });
   deriveTheme(ds, 'light', { id: 'dark', name: '暗色' }, 'dark');

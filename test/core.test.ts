@@ -120,7 +120,7 @@ test('用户只能插入单个文字节点与空画板', async () => {
 });
 
 test('prototype links: canvas ignores href, link hook renders, export switches frames', async () => {
-  const { buildExport } = await import('../src/server/export.ts');
+  const { buildExport } = await import('../src/server/export/export.ts');
   const doc = setup();
   applyOps(doc, [
     { op: 'frame_create', index: 1, frame: { id: 'f2', name: 'Home', width: 400, height: 600, root: { id: 'f2', type: 'page' } } },
@@ -198,7 +198,7 @@ test('proto: static render uses initial state; runtime hook collects entries', (
 });
 
 test('export: interactive proto runs from embedded engine source', async () => {
-  const { buildExport } = await import('../src/server/export.ts');
+  const { buildExport } = await import('../src/server/export/export.ts');
   const doc = setup();
   applyOps(doc, [
     { op: 'set', id: 'f1', field: 'proto', value: { vars: { tab: 'a', sec: 0 } } },
@@ -366,7 +366,7 @@ test('字体令牌与嵌入渐变 / 阴影的颜色令牌都渲染为 var()', as
 });
 
 import { validateTweaks } from '../src/core/schema.ts';
-import { buildExport } from '../src/server/export.ts';
+import { buildExport } from '../src/server/export/export.ts';
 
 test('tweaks: set_tweaks 可撤销，校验令牌存在，导出带调节面板', () => {
   const doc = emptyDoc('tw');

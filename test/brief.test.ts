@@ -7,9 +7,9 @@ import path from 'node:path';
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dm-brief-'));
 process.env.DESIGN_MCP_HOME = home;
 
-const { Canvas } = await import('../src/server/canvas.ts');
-const { AUTO, briefRecord, customBriefForm, defaultBriefForm, DIRECTION_Q } = await import('../src/server/brief.ts');
-const { suggestDirections } = await import('../src/server/directions.ts');
+const { Canvas } = await import('../src/server/canvas/canvas.ts');
+const { AUTO, briefRecord, customBriefForm, defaultBriefForm, DIRECTION_Q } = await import('../src/server/design/brief.ts');
+const { suggestDirections } = await import('../src/server/design/directions.ts');
 
 const cards = suggestDirections({ brief: '移动端登录页', seed: 4 });
 
@@ -93,7 +93,7 @@ test('画布：跳过问卷、选“让 AI 决定”都不记录方向', () => {
 });
 
 test('主色题可多选，回答整理成多套配色', async () => {
-  const { colorSchemes, COLOR_Q } = await import('../src/server/brief.ts');
+  const { colorSchemes, COLOR_Q } = await import('../src/server/design/brief.ts');
   const f = defaultBriefForm({ brief: '登录页', cards });
   const q = f.questions.find((x) => x.id === COLOR_Q)!;
   assert.equal(q.kind, 'multi');

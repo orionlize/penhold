@@ -64,10 +64,17 @@ claude mcp add design -- node /绝对路径/penhold-mcp/dist/server/cli.js
 
 ```text
 src/core/        前后端共用：数据模型、schema 校验、操作与逆操作、编辑翻译、渲染器
-src/server/      守护进程：文档引擎(canvas.ts)、注册表与绑定、MCP 工具(mcp.ts)、HTTP/WS、导出
+src/server/      守护进程入口(daemon.ts，HTTP/WS)、MCP 工具(mcp.ts)、数据目录(paths.ts)
+  canvas/        文档引擎(canvas.ts)、注册表与绑定(registry.ts)、批注、素材入库
+  design/        设计依据：问卷、方向卡片、预设、设计规范发现、页面类型片段、设计系统与其接口、字体检测、找图
+  export/        HTML / zip 导出
 src/proxy.ts     stdio 薄代理（守护进程重启后自动重放握手）
 src/hook.ts      宿主会话 hook
-web/src/         画布前端：iframe 渲染与增量更新、选中与盒模型覆盖层、属性面板、图层树、页面内截图与渲染检查
+web/src/         画布前端（store.ts、i18n、主题与 locales 在根目录）
+  pages/         首页、设计系统列表与编辑页
+  editor/        画布视图、工具栏、图层树、批注、AI 光标、播放器、Tweaks
+  inspector/     属性面板与各字段控件
+  lib/           iframe 渲染与增量更新、页面内截图与渲染检查、几何、导出、图标等无界面工具
 guides/          内置设计规范（default/SKILL.md）、页面类型规范片段（pages/*.md）、设计方向示例稿（examples/*.json）与产品类型预设目录（catalog.json）
 website/         官网（Next.js，独立依赖，部署见 website/README.md）
 scripts/         开发辅助：import-presets.ts 生成内置预设目录，build-examples.ts 生成各设计方向的示例稿，open.ts 新建画布、call.ts 调用单个工具、e2e-login.ts 端到端出稿演示、e2e-plan.ts 页面规划与绘制过程演示，e2e-states.ts 交互状态检查演示
@@ -78,7 +85,7 @@ scripts/         开发辅助：import-presets.ts 生成内置预设目录，bui
 - **字体只用本机已安装的**：设计方向（`design_direction`）生成字体令牌前先检测本机字体（Linux / macOS 用 `fc-list`，macOS 无 fontconfig 时用 `system_profiler`，Windows 读注册表），目录里没安装的西文字体会从字体栈中去掉；标题按风格原型取宋体、楷体、圆体或黑体，本机没有该类字体时依次回退。检测不到时沿用目录字体加通用中文回退。
 - **字体令牌与嵌入令牌**：`fontFamily: "{font.heading}"` 渲染为 `var(--font-heading)`（令牌值按字体族列表输出）；颜色、渐变、阴影的值里可以嵌入令牌，如 `linear-gradient(90deg, {color.primary}, {color.accent})`。
 - **方向示例稿**：`guides/examples/<原型 id>.json` 是每个风格原型的一张移动端首屏（只引用令牌），选定方向时随 `design_direction` 返回；由 `scripts/build-examples.ts` 生成，改示例改这个脚本。
-- **找图**：`design_image` 搜索图库并返回候选地址、原始尺寸、授权、署名和缩略图（`src/server/images.ts`）；选中的地址写进 `props.src` 后由原有的入库流程下载。Openverse 只取允许商用和修改的授权。
+- **找图**：`design_image` 搜索图库并返回候选地址、原始尺寸、授权、署名和缩略图（`src/server/design/images.ts`）；选中的地址写进 `props.src` 后由原有的入库流程下载。Openverse 只取允许商用和修改的授权。
 - **按题材主色重算色板**：`design_direction({pick, primary})` 把预设色板的色相整体转到指定主色，保持明度与饱和度搭配，并修正文字对比度；主色记在画布上，再取方向时沿用。
 - **题材母题**：`design_direction({pick, concept, motif})` 的 `motif` 记录从题材里取的具体的物或形状，与方向卡片的记忆点（构图手法）一起记到画布。
 - **设计体检**：`design_screenshot` 截整个画板时，在渲染检查之外附一段设计提醒（`src/core/designLint.ts`）：阶梯外的字号 / 间距 / 圆角、字号档数过多、字重或字体族过多、没有视觉焦点、粗体过多、胶囊过多、卡片嵌套、左侧粗色条卡片、三个以上主色实心按钮、同图重复、emoji 图标、模板化元信息、直接写色值。提醒不阻塞自检；位图被放大超过 1.3 倍（`low_res_image`）、文字对比度不足（`low_contrast`：按实际底色计算，正文 4.5:1、大字 3:1，禁用控件除外）、移动端画板上可点击元素小于 44×44（`small_target`）则算作需要修复的问题。
@@ -130,19 +137,19 @@ scripts/         开发辅助：import-presets.ts 生成内置预设目录，bui
   3. 项目中的 `DESIGN.md`、`design-system.md`、`STYLEGUIDE.md`、`docs/design*.md` 等文件。
 
   守护进程只给出路径与摘要，内容由 AI 用自己的读文件工具读取，所以 skill 引用的同目录文件也能读到。
-- **设计系统（参照 Claude Design）**：设计依据是一个与画布分开保存、同一项目共用的设计系统（`design_system` 工具，`src/core/designSystem.ts`、`src/server/systems.ts`）。
+- **设计系统（参照 Claude Design）**：设计依据是一个与画布分开保存、同一项目共用的设计系统（`design_system` 工具，`src/core/designSystem.ts`、`src/server/design/systems.ts`）。
   - 内容：颜色按主题（亮 / 暗）各存一值并写明用途与对比度检查对象；字阶加组合文字样式（字号 + 行高 + 字重 + 字体，`text_styles` 给出可直接写进 style 的字段）；间距、圆角、阴影；组件定义；品牌说明（概念、母题、记忆点、形状、版式、不要做的事）。
   - 存放：`~/.penhold/systems/<id>/`，含 `system.json` 与生成的 `README.md`（品牌手册，AI 先读它）、`tokens.css`（`:root` 为默认主题，其余主题写在 `[data-theme=…]`）、`tokens.json`（Claude Design 的令牌格式）。`systems/index.json` 记录各项目目录的默认系统。
   - 来源：`create` 由方向卡片生成（按风格原型的信息密度定字阶、间距与字重，自动推导另一种明暗，修正对比度）、由内置预设或画布现有令牌整理；`import` 从 CSS 变量（Tailwind v4 `@theme`、shadcn 的 HSL 三元组、`.dark` / `prefers-color-scheme` 暗色块）或 Claude Design 的 tokens.json 导入，取值照抄，不达标的对比度只列出不改。
   - 安装：画布记录 `session.json` 的 `system`（id、版本、主题），选定主题展开成扁平令牌写入 `doc.tokens`，系统里的组件一并复制。项目有默认系统时，新画布不再出方向卡片与问卷，首次写入（含 `design_plan`）时自动安装。`theme` 切换主题；`update` 按名字合并修改系统并重装到当前画布；对已安装系统的令牌直接 `tokens_set` 会返回 `system_drift` 提醒。
   - `save_components` 把画布里的组件存进系统；`export` 写到项目的 `design-system/`，提交进仓库后其他机器打开同一项目自动发现（版本更新的覆盖本机副本）。
   - 用户自定义：首页的“设计系统”区列出本机所有系统，可新建（空白加主色、风格方向卡片、粘贴 CSS 变量、粘贴 tokens.json / system.json）、复制、删除（移入回收站）。
-  - 编辑页：`http://127.0.0.1:<port>/s/<系统 id>`（[web/src/SystemEditor.tsx](web/src/SystemEditor.tsx)）。
+  - 编辑页：`http://127.0.0.1:<port>/s/<系统 id>`（[web/src/pages/SystemEditor.tsx](web/src/pages/SystemEditor.tsx)）。
     - 可改：各主题的颜色（取色器或直接输入 hex / rgb / hsl / oklch）、字体、字阶、文字样式、间距、圆角、阴影、品牌说明；组件只能改用途或移除，结构仍由 AI 在画布里画好后存入。
     - 右侧实时预览；颜色旁显示对比度，未达标的可一键修正（只调明度）；只有一套主题时可由它生成另一种明暗。
     - 保存（Ctrl / Cmd+S）后版本号 +1，重新生成 README、tokens.css 与 tokens.json，并把令牌同步到所有安装了它的画布（各画布保持自己选的主题，画布里可撤销）；AI 正在修改的画布跳过，AI 下次打开时会看到版本提示。
     - “用于项目”里勾选项目目录，把它设为该项目的默认系统。
-    - 接口在 [src/server/systemApi.ts](src/server/systemApi.ts)：`GET/POST /api/systems`、`GET/PUT /api/systems/<id>`、`POST /api/systems/<id>/(duplicate|delete|default)`；提交内容经结构校验，取值与画布令牌同一套限制。
+    - 接口在 [src/server/design/systemApi.ts](src/server/design/systemApi.ts)：`GET/POST /api/systems`、`GET/PUT /api/systems/<id>`、`POST /api/systems/<id>/(duplicate|delete|default)`；提交内容经结构校验，取值与画布令牌同一套限制。
   - 只读浏览页：`http://127.0.0.1:<port>/s/<系统 id>/view`，展示各主题色板与对比度、文字样式、间距圆角阴影与组件预览。
   - 内置预设的色板在加载时修正对比度：主色对背景不足 3:1 而强调色达标时两者互换，正文、次要文字与色块上的文字补到 4.5:1。按主色重算色板改在 OKLCH 中转色相。
 - **内置设计预设（兜底）**：以上都没找到时，`design_guides` 只含内置通用规范 [guides/default/SKILL.md](guides/default/SKILL.md)，AI 先选设计方向卡片（见下），需要具体行业的色板时再用 `design_preset` 按用户需求匹配产品类型预设：
@@ -157,11 +164,11 @@ scripts/         开发辅助：import-presets.ts 生成内置预设目录，bui
   - 用户选了视觉方向时，服务端直接把它记为画布的设计方向，`design_ask` 返回完整的 `direction`（令牌、形状、记忆点）。
   - `design_plan` 在没有设计依据、也没有问卷回答时会拒绝（`needs_brief`）。用户在对话里已经把产品、视觉偏好和页面内容说清楚时，AI 传 `enough_info`（一句话复述用户说过的要点）跳过问卷。`frame_create` 不受此限制。
 - **设计方向卡片（提示词很短时的兜底）**：“移动端登录页”这类需求里没有产品类型，按产品类型匹配不到预设，模型会退回自己的默认配色与版式。画布没有任何设计依据（本地规范、已选方向 / 预设、已有令牌）时，`design_plan` 的返回值附带 `design_directions`：
-  - 3 张差异明显的方向卡片，每张由风格原型（[src/server/directions.ts](src/server/directions.ts) 中的 12 种，如瑞士网格、高饱和色块、杂志编辑、新粗野、深色沉浸）、目录中的一套色板、一组字体搭配和一个记忆点组合而成。
+  - 3 张差异明显的方向卡片，每张由风格原型（[src/server/design/directions.ts](src/server/design/directions.ts) 中的 12 种，如瑞士网格、高饱和色块、杂志编辑、新粗野、深色沉浸）、目录中的一套色板、一组字体搭配和一个记忆点组合而成。
   - 差异化规则：原型互不相同，主色色相相差不小于 45°，至多一个深色方向；目录中蓝色系色板占三分之一以上，抽取时按色相反向加权；同项目其他画布用过的主色与原型降权；需求能匹配到产品类型时，第一张是该类型的推荐风格与色板（稳妥解），其余有意拉开。
   - `design_direction({pick, concept})` 返回完整方向（可直接传给 `tokens_set` 的颜色 / 字体 / 圆角 / 阴影令牌、风格效果要点、该方向下不要做的事），并记到画布 `session.json` 的 `direction`；之后 `canvas_open` 返回 `design_direction`。`design_direction()` 不带参数换一批。
   - 尚未选定方向就调用 `tokens_set` 时，返回值带 `direction_reminder`。
-- **页面类型规范片段**：`design_plan` 按页面名与区块名识别页面类型，把 [guides/pages/](guides/pages/) 下对应的片段（登录、首页、看板、落地页、列表、详情、表单、个人中心、引导 / 结果页）随返回值的 `page_guides` 直接下发，内容是该类页面的几种构图方案与常见平庸写法。有本地设计规范时同样下发：品牌色与字体以本地规范为准，构图由片段补充。新增类型：在 `guides/pages/` 加 `<type>.md`，并在 [src/server/pageGuides.ts](src/server/pageGuides.ts) 的 `TYPES` 中登记匹配规则。
+- **页面类型规范片段**：`design_plan` 按页面名与区块名识别页面类型，把 [guides/pages/](guides/pages/) 下对应的片段（登录、首页、看板、落地页、列表、详情、表单、个人中心、引导 / 结果页）随返回值的 `page_guides` 直接下发，内容是该类页面的几种构图方案与常见平庸写法。有本地设计规范时同样下发：品牌色与字体以本地规范为准，构图由片段补充。新增类型：在 `guides/pages/` 加 `<type>.md`，并在 [src/server/design/pageGuides.ts](src/server/design/pageGuides.ts) 的 `TYPES` 中登记匹配规则。
 - **重新构建后自动升级守护进程**：守护进程在 `daemon.json` 中记录构建标识（编译产物的最新修改时间）；代理或 `penhold-mcp open` 发现守护进程来自更旧的构建时会平滑重启它（只升级不降级）。
 - **画布无需令牌**：画布页面、管理 API 与画布 WebSocket 直接打开即可（`http://127.0.0.1:<port>/c/<canvasId>`），靠只监听 127.0.0.1 + 校验 Host 与 Origin 防护；只有 MCP 端点（`/mcp`）需要令牌，由 stdio 代理自动携带（`~/.penhold/token`，权限 600）。
 
