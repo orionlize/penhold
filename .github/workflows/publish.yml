@@ -1,0 +1,98 @@
+# 手动发布 npm 包：Actions → Publish to npm → Run workflow。
+# 需要仓库 Secret NPM_TOKEN（npm 的 Automation / Granular token，对 penhold-mcp 有发布权限）。
+# 流程：校验 → （可选）升版本号并推送提交与标签 → 发布到 npm（带 provenance）→ 创建 GitHub Release。
+name: Publish to npm
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 版本号升级方式（none = 直接发布 package.json 里的当前版本）
+        type: choice
+        options: [none, patch, minor, major, prerelease]
+        default: patch
+      tag:
+        description: npm dist-tag（预发布版本用 next / beta）
+        type: string
+        default: latest
+      dry_run:
+        description: 只演练（npm publish --dry-run，不推送、不建 Release）
+        type: boolean
+        default: false
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+permissions:
+  contents: write # 推送版本提交与标签、创建 Release
+  id-token: write # npm provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+      - name: Bump version
+        if: inputs.bump != 'none'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ "${{ inputs.bump }}" = prerelease ]; then
+            npm version prerelease --preid "${{ inputs.tag == 'latest' && 'next' || inputs.tag }}" -m "发布 v%s"
+          else
+            npm version "${{ inputs.bump }}" -m "发布 v%s"
+          fi
+
+      - name: Read version
+        id: v
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if npm view "penhold-mcp@$VERSION" version >/dev/null 2>&1; then
+            echo "::error::penhold-mcp@$VERSION 已经发布过，请选择 bump 升级版本号"
+            exit 1
+          fi
+          case "$VERSION" in
+            *-*) [ "${{ inputs.tag }}" != latest ] || { echo "::error::预发布版本 $VERSION 不能用 latest 标签发布"; exit 1; } ;;
+          esac
+
+      - run: npm run build
+
+      - name: Publish
+        run: npm publish --provenance --access public --tag "${{ inputs.tag }}" ${{ inputs.dry_run && '--dry-run' || '' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Push version commit and tag
+        if: ${{ !inputs.dry_run && inputs.bump != 'none' }}
+        run: git push --follow-tags origin HEAD:main
+
+      - name: Tag current version
+        if: ${{ !inputs.dry_run && inputs.bump == 'none' }}
+        run: |
+          TAG="v${{ steps.v.outputs.version }}"
+          if ! git rev-parse "$TAG" >/dev/null 2>&1; then
+            git tag "$TAG"
+            git push origin "$TAG"
+          fi
+
+      - name: Create GitHub Release
+        if: ${{ !inputs.dry_run }}
+        run: gh release create "v${{ steps.v.outputs.version }}" --title "v${{ steps.v.outputs.version }}" --generate-notes ${{ contains(steps.v.outputs.version, '-') && '--prerelease' || '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}

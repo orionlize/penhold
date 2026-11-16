@@ -2,6 +2,14 @@
   "name": "penhold-mcp",
   "version": "0.1.0",
   "description": "本地 AI 设计画布：AI 通过 MCP 绘制与读取 UI 稿，用户在浏览器画布中微调，可导出单文件 HTML",
+  "homepage": "https://website-duck-4bf0.vercel.app",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/orionlize/penhold.git"
+  },
+  "bugs": {
+    "url": "https://github.com/orionlize/penhold/issues"
+  },
   "type": "module",
   "bin": {
     "penhold-mcp": "dist/server/cli.js"

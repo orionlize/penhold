@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-penhold-mcp is a local AI design canvas. An AI draws and reads UI mockups through MCP tools, the user fine-tunes them in a browser canvas, and the result exports as single-file HTML. The repo's docs and code comments are in Chinese. `README.md` is the detailed source of truth for behavior and conventions (tools, design systems, proto, annotations, environment variables), and `docs/PRD.md` holds the original design. Read the relevant README section before changing a feature.
+penhold-mcp is a local AI design canvas. An AI draws and reads UI mockups through MCP tools, the user fine-tunes them in a browser canvas, and the result exports as single-file HTML. The repo's docs and code comments are in Chinese. `README.md` is the user-facing introduction (install, client setup, commands, environment variables). `docs/DEVELOPMENT.md` is the detailed source of truth for behavior and conventions (tools, design systems, proto, annotations, code layout), and `docs/PRD.md` holds the original design. Read the relevant `docs/DEVELOPMENT.md` section before changing a feature, and update it (or the README, for user-visible install and config changes) along with the code.
 
 ## Commands
 
@@ -31,7 +31,7 @@ npm run daemon         # run the daemon in the foreground from source (tsx)
 
 Runtime data lives in `~/.penhold` (`DESIGN_MCP_HOME`).
 
-**Single writer:** `src/server/canvas/canvas.ts` (`Canvas`) is the only place that mutates a design doc. It validates, applies ops, bumps `rev`, broadcasts to browsers, appends to a log, and persists `design.json`. It also owns the AI edit lock and the self-check bookkeeping (`pendingCheck`, `markChecked`). The lock is released only after every frame the AI touched has been screenshotted, plus the planned-page and interaction-state rules described in the README. `src/server/canvas/registry.ts` maps canvases, aliases, and host sessions to `Canvas` instances.
+**Single writer:** `src/server/canvas/canvas.ts` (`Canvas`) is the only place that mutates a design doc. It validates, applies ops, bumps `rev`, broadcasts to browsers, appends to a log, and persists `design.json`. It also owns the AI edit lock and the self-check bookkeeping (`pendingCheck`, `markChecked`). The lock is released only after every frame the AI touched has been screenshotted, plus the planned-page and interaction-state rules described in `docs/DEVELOPMENT.md`. `src/server/canvas/registry.ts` maps canvases, aliases, and host sessions to `Canvas` instances.
 
 **Shared core (`src/core/`):** compiled into the server and also included by the web tsconfig, so it must stay DOM- and Node-agnostic.
 - `doc.ts`: `applyOps` returns inverse ops, which undo relies on.
