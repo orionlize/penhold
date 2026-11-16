@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { GithubIcon } from '../components/github-icon';
 import { REPO } from '../site';
 import { Pager, Sidebar } from './sidebar';
 import './docs.css';
@@ -20,7 +21,9 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
             <Link href="/" className="only-desk">
               首页
             </Link>
-            <a href={REPO}>GitHub</a>
+            <a className="gh-link" href={REPO} aria-label="GitHub" title="GitHub">
+              <GithubIcon />
+            </a>
             <Link className="nav-cta only-desk" href="/docs/install">
               安装 MCP
             </Link>
