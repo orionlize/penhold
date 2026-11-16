@@ -9,7 +9,7 @@
     "outDir": "dist/server",
     "rootDir": "src",
     "declaration": false,
-    "sourceMap": true,
+    "sourceMap": false,
     "lib": ["ES2023", "DOM"],
     "types": ["node"]
   },

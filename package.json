@@ -24,7 +24,7 @@
   },
   "scripts": {
     "build": "npm run build:server && npm run build:web",
-    "build:server": "tsc -p . && node -e \"require('fs').chmodSync('dist/server/cli.js',0o755)\"",
+    "build:server": "node -e \"require('fs').rmSync('dist/server',{recursive:true,force:true})\" && tsc -p . && node -e \"require('fs').chmodSync('dist/server/cli.js',0o755)\"",
     "build:web": "vite build --config web/vite.config.ts",
     "dev:web": "vite --config web/vite.config.ts",
     "daemon": "tsx src/cli.ts daemon",
