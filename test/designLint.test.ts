@@ -52,6 +52,7 @@ test('阶梯外字号、没有焦点、处处加粗', () => {
   assert.ok(k.includes('off_scale') && k.includes('flat_hierarchy') && k.includes('bold_everywhere'), k.join());
   assert.match(notes.find((n) => n.kind === 'off_scale')!.detail, /13px × 6/);
   assert.match(formatDesignNotes(notes), /设计体检：\d 项提醒/);
+  assert.match(formatDesignNotes(notes, true), /处理方式同前/);
 });
 
 test('字号继承自父节点，展示级大字号不算阶梯外', () => {

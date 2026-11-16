@@ -196,7 +196,7 @@ interface Node {
 - **类型由 AI 命名。** `type` 是 AI 给的自由字符串，工具不校验其取值；`canvas_open` 返回画布中已用过的类型名和组件名，供 AI 保持一致。
 - **同组件名即复用。** 插入时 `component` 是新名字，则该子树注册为组件定义；是已有名字，则只需给 `{component, overrides}`，子树取自定义。对已有名字又给出不同子树时拒绝，并提示改用 `node_update` 修改组件定义或换一个组件名。
 - **改组件即改全部实例。** `node_update` 作用于组件内部节点时修改的是定义，返回中列出受影响的实例数量；要只改一个实例，写 `overrides`。
-- **写工具统一返回** `{rev, affected: [{id, type, component}], needs_check: true}`，不回显节点内容。
+- **写工具统一返回** `{rev, affected: ["<id> <type>", "<id> <type><组件名>"], needs_check: true}`（紧凑 JSON），不回显节点内容。
 - **绘制必须开浏览器并自检。** 写工具执行前检查是否有画布页面在线；没有则由守护进程用默认浏览器打开画布并等待连接，超时则报错而不是盲写。每轮绘制结束前，AI 必须对改动过的画板调用 `design_screenshot`；未自检时 `canvas_status` 持续报告待检查的画板。
 - **AI 修改期间画布对用户只读。** 第一个写工具获取画布的编辑锁，详见第 5 节。
 - **只能局部读取。** `design_outline` 有深度上限，`design_read` 必须给出节点 id 或组件名。超出 `depth` 的后代只返回 `{id, type, component}` 存根，需要时再按 id 继续读。

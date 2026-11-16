@@ -341,11 +341,13 @@ export function designCheckup(doc: DesignDoc, frame: Frame): DesignNote[] {
   return notes;
 }
 
-/** 体检结果的文字报告；没有提醒时返回空字符串。 */
-export function formatDesignNotes(notes: DesignNote[]): string {
+/** 体检结果的文字报告；没有提醒时返回空字符串。brief 时省略处理说明（同一会话里已经给过一次）。 */
+export function formatDesignNotes(notes: DesignNote[], brief = false): string {
   if (!notes.length) return '';
   return [
-    `设计体检：${notes.length} 项提醒（不影响自检通过）。逐条判断：是这一稿有意的设计选择就保留并在回复里说明，否则修改后重新截图。`,
+    brief
+      ? `设计体检：${notes.length} 项提醒（不影响自检通过，处理方式同前）。`
+      : `设计体检：${notes.length} 项提醒（不影响自检通过）。逐条判断：是这一稿有意的设计选择就保留并在回复里说明，否则修改后重新截图。`,
     ...notes.map((n) => `- [${n.kind}] ${n.detail}`),
   ].join('\n');
 }

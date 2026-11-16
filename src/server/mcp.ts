@@ -23,7 +23,6 @@ import {
   BoxSchema,
   LayoutSchema,
   MetaSchema,
-  StatesSchema,
   StyleSchema,
   validateNodeInput,
   validateTokens, validateTweaks,
@@ -73,6 +72,16 @@ export interface SessionCtx {
   brief?: string;
   /** design_plan 的 enough_info：用户在对话里已说清的产品与内容（问卷只需再问视觉偏好）。 */
   known?: string;
+  /** 本会话里已经完整给过的截图报告固定说明（审查清单、体检说明等），之后只给简短版，避免每次截图重复。 */
+  shown?: Set<string>;
+}
+
+/** 某段固定说明在本会话里是否已经完整给过；第一次调用返回 false 并记下。 */
+function seenBefore(ctx: SessionCtx, key: string): boolean {
+  const shown = (ctx.shown ??= new Set());
+  if (shown.has(key)) return true;
+  shown.add(key);
+  return false;
 }
 
 // Node 字段与交互说明只随 node_insert 下发一次，其他写工具引用它，避免同一段说明在工具列表里重复多份。
@@ -133,14 +142,21 @@ const pathText = (path: Step[]) => path.map((p) => p.label).join(' → ');
 const fmtVars = (v: Record<string, ProtoValue>) => JSON.stringify(v).slice(0, 160);
 
 /** 交互状态检查的文字报告；返回文字与需要附上的截图（带说明）。 */
-function formatStates(ex: Exploration, results: ProbeResult[], warnings: ProtoWarning[]): { text: string; images: Array<{ label: string; png: string }> } {
+/**
+ * seen(key) 返回这段内容本会话里是否已原样给过（并记下）：重复截图同一画板时，
+ * 没有新问题的状态列表与离开本页的跳转列表通常不变，只给简短版。
+ */
+function formatStates(ex: Exploration, results: ProbeResult[], warnings: ProtoWarning[], seen: (key: string) => boolean = () => false): { text: string; images: Array<{ label: string; png: string }> } {
   const lines: string[] = [];
   const images: Array<{ label: string; png: string }> = [];
   const others = ex.states.slice(1);
   let bad = 0;
   if (others.length) {
+    const scope = `${ex.truncated ? `（已达上限 ${ex.maxStates} 个，未穷尽）` : ''}`;
     lines.push(
-      `交互状态检查：从初始状态出发，点击 / 输入 / 等待计时最多 ${ex.maxDepth} 步，共到达 ${others.length} 个其他状态${ex.truncated ? `（已达上限 ${ex.maxStates} 个，未穷尽）` : ''}；只列出初始状态里没有的问题，同一问题只在首次出现的状态下列出。`,
+      seen('states-intro')
+        ? `交互状态检查：共到达 ${others.length} 个其他状态${scope}，只列新问题。`
+        : `交互状态检查：从初始状态出发，点击 / 输入 / 等待计时最多 ${ex.maxDepth} 步，共到达 ${others.length} 个其他状态${scope}；只列出初始状态里没有的问题，同一问题只在首次出现的状态下列出。`,
     );
     // 同一问题（类型 + 节点）在多个状态中出现时只在第一次列出
     const firstSeen = new Map<string, string>();
@@ -163,9 +179,15 @@ function formatStates(ex: Exploration, results: ProbeResult[], warnings: ProtoWa
       if (fresh.length > 12) lines.push(`  - …另有 ${fresh.length - 12} 个`);
       if (r.png) images.push({ label: `${name} ${pathText(st.path)}${r.region ? `（变化区域 x${r.region.x} y${r.region.y} ${r.region.width}×${r.region.height}）` : ''}`, png: r.png });
     }
-    if (quiet.length) lines.push(`- 其余 ${quiet.length} 个状态没有新问题：${quiet.slice(0, 16).join('、')}${quiet.length > 16 ? ' …' : ''}`);
+    if (quiet.length) {
+      const list = `${quiet.slice(0, 16).join('、')}${quiet.length > 16 ? ' …' : ''}`;
+      lines.push(seen(`quiet:${list}`) ? `- 其余 ${quiet.length} 个状态没有新问题（同上次）` : `- 其余 ${quiet.length} 个状态没有新问题：${list}`);
+    }
   } else if (ex.interactive) lines.push('交互状态检查：画板内的交互不会在本页产生新的状态。');
-  if (ex.exits.length) lines.push(`离开本页：${ex.exits.slice(0, 8).map((e) => `${e.step.label} → ${navText(e.nav)}`).join('；')}`);
+  if (ex.exits.length) {
+    const list = ex.exits.slice(0, 8).map((e) => `${e.step.label} → ${navText(e.nav)}`).join('；');
+    lines.push(seen(`exits:${list}`) ? `离开本页：${ex.exits.length} 处跳转，同上次` : `离开本页：${list}`);
+  }
   const stat = [
     ...ex.unreachable.map((u) => `- [unreachable] ${u.addr}：${u.what === 'show' ? 'show' : '条件样式 when'} “${u.expr}” 在所有可到达的状态中都不成立，${u.what === 'show' ? '元素永远不会显示' : '这组样式永远不会生效'}：检查变量取值与比较是否写错，或补上切换到该状态的 onClick`),
     ...warnings.map((w) => `- [${w.kind}] ${w.id}：${w.detail}`),
@@ -175,6 +197,8 @@ function formatStates(ex: Exploration, results: ProbeResult[], warnings: ProtoWa
   return { text: lines.join('\n'), images };
 }
 
+/** 审查清单的简短版：同一会话第二次截图起使用。 */
+const REVIEW_CHECKLIST_BRIEF = '按清单人工审查截图：文字单行不截断、指示条居中、图标文字垂直居中、同类元素一致、对齐与边距、对比度与焦点。';
 const REVIEW_CHECKLIST = '看截图逐项审查：①按钮 / tab / 标签文字是否单行、不换行不截断；②tab 下划线、选中指示条是否与文字水平居中；③按钮、列表项、导航项内图标与文字是否垂直居中；④同类元素（按钮、tab、卡片、列表项）尺寸、间距、圆角、字号是否一致；⑤对齐线、左右边距是否统一，有无文字贴边；⑥对比度与视觉焦点。';
 
 const noteArg = z
@@ -196,17 +220,31 @@ const nodeShape = z
     style: StyleSchema.optional(),
     props: z.record(z.string(), z.string()).optional(),
     text: z.string().optional(),
-    states: StatesSchema.optional(),
+    // hover / focus / active 的值与 style 相同；完整校验在 validateNodeInput 里做，这里不重复展开三份 style schema
+    states: z
+      .object({ hover: z.record(z.string(), z.unknown()), focus: z.record(z.string(), z.unknown()), active: z.record(z.string(), z.unknown()) })
+      .partial()
+      .optional()
+      .describe('交互态样式，hover / focus / active 的字段同 style'),
     proto: z.record(z.string(), z.any()).optional().describe('原型交互（见 node_insert 说明的“交互”一节）'),
     meta: MetaSchema.optional(),
     children: z.array(z.any()).optional().describe('子节点数组，每项结构同本节点'),
   })
   .describe('抽象节点');
 
+/** frame_create / node_replace 用的节点参数：字段同 node_insert 的 nodes[] 项，不在 schema 里再展开一份（服务端用 validateNodeInput 完整校验）。 */
+const nodeRef = (desc: string, typeOptional = false) => z.object({ type: typeOptional ? z.string().optional() : z.string() }).loose().describe(`${desc}。字段同 node_insert 的 nodes[] 项（Node 结构见 node_insert）`);
+
 type Json = Record<string, unknown>;
 
+// 紧凑 JSON：结果会留在模型上下文里被反复重读，缩进与换行都是白花的 token。
 function ok(data: unknown): CallToolResult {
-  return { content: [{ type: 'text', text: JSON.stringify(data, null, 1) }] };
+  return { content: [{ type: 'text', text: JSON.stringify(data) }] };
+}
+
+/** 写工具的 affected 压成 "id type" / "id type<组件名>" 字符串，比 {id, type} 对象省一半以上。 */
+function fmtAffected(list: Affected[]): string[] {
+  return list.map((a) => `${a.id} ${a.type}${a.component ? `<${a.component}>` : ''}`);
 }
 function fail(e: unknown): CallToolResult {
   const err = e as Error & { code?: string; data?: unknown };
@@ -325,15 +363,15 @@ function outlineNode(doc: DesignDoc, n: Node, depth: number): Json {
   return out;
 }
 
-function formatReport(target: string, r: ShotReport): string {
+function formatReport(target: string, r: ShotReport, brief = false): string {
   const lines = [`${target} 渲染尺寸 ${Math.round(r.width)}×${Math.round(r.height)}，节点 ${r.nodes} 个。`];
-  if (!r.issues.length) lines.push('自动检查通过：未发现溢出、越界、重叠、零尺寸、缺失字体、破损或被放大的图片、文字换行或未居中、对比度不足、触控目标过小。');
+  if (!r.issues.length) lines.push(brief ? '自动检查通过。' : '自动检查通过：未发现溢出、越界、重叠、零尺寸、缺失字体、破损或被放大的图片、文字换行或未居中、对比度不足、触控目标过小。');
   else {
     lines.push(`发现 ${r.issues.length} 个问题，请逐个修复后重新截图：`);
     for (const i of r.issues.slice(0, 60)) lines.push(`- [${i.kind}] ${i.id}：${i.detail}`);
     if (r.issues.length > 60) lines.push(`…另有 ${r.issues.length - 60} 个`);
   }
-  lines.push(`自动检查无法覆盖全部视觉问题。${REVIEW_CHECKLIST}`);
+  lines.push(brief ? REVIEW_CHECKLIST_BRIEF : `自动检查无法覆盖全部视觉问题。${REVIEW_CHECKLIST}`);
   return lines.join('\n');
 }
 
@@ -551,7 +589,7 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
       const warnings = lintProto(c.doc, c.pendingCheck);
       return ok({
         rev: tx.rev,
-        affected,
+        affected: fmtAffected(affected),
         needs_check: true,
         pending_check: [...c.pendingCheck],
         ...(planned.length ? { planned_not_started: planned } : {}),
@@ -1274,7 +1312,7 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
         name: z.string().describe('如 “登录页 / 桌面端”'),
         width: z.number().int().min(100).max(10000).describe('视口宽度，如 1440 / 390'),
         height: z.union([z.number().int().min(100).max(100000), z.literal('auto')]).optional().describe('默认 auto'),
-        root: nodeShape.optional().describe('根节点（不需要 id），用于设置背景、内边距、布局与初始子节点'),
+        root: nodeRef('根节点（不需要 id，type 缺省 page），用于设置背景、内边距、布局与初始子节点', true).optional(),
         index: z.number().int().min(0).optional(),
         note: noteArg,
       },
@@ -1362,7 +1400,7 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
     {
       title: '替换节点',
       description: '用新的节点子树整体替换 node_id（保持在父节点中的位置，缺省沿用原 id；Node 结构见 node_insert）。带 base_rev 时，若目标子树在其后被用户改过则拒绝并返回变化字段，请先读后写。',
-      inputSchema: { node_id: z.string(), node: nodeShape, base_rev: z.number().int().optional(), note: noteArg },
+      inputSchema: { node_id: z.string(), node: nodeRef('新的节点子树'), base_rev: z.number().int().optional(), note: noteArg },
     },
     async (args) =>
       write(async (c) => {
@@ -1801,7 +1839,7 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
           vars = { ...vars, ...args.vars };
           const [r] = await c.probe({ frame: host.id, states: [{ vars, parent: -1 }], images: 'all', dedupe: false, target, scale, maxImages: 1 });
           const head = `状态 vars ${fmtVars(vars)}${timers.length ? `，进行中：${timers.join('、')}` : ''}${unknown.length ? `\n注意：变量 ${unknown.join(', ')} 未在画板中声明` : ''}`;
-          const text = formatReport(target, { width: r.width, height: r.height, nodes: 0, issues: r.issues }).replace(/，节点 0 个/, '');
+          const text = formatReport(target, { width: r.width, height: r.height, nodes: 0, issues: r.issues }, seenBefore(ctx, 'report')).replace(/，节点 0 个/, '');
           return {
             content: [
               ...(r.png ? [{ type: 'image', data: r.png, mimeType: 'image/png' }] : []),
@@ -1811,9 +1849,10 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
         }
 
         const shot = await c.screenshot(target, scale);
-        let text = formatReport(target, shot.report);
+        let text = formatReport(target, shot.report, seenBefore(ctx, 'report'));
         if (frame) {
-          const notes = formatDesignNotes(designCheckup(c.doc, frame));
+          const found = designCheckup(c.doc, frame);
+          const notes = formatDesignNotes(found, found.length > 0 && seenBefore(ctx, 'lint'));
           if (notes) text += `\n\n${notes}`;
         }
         const extra: CallToolResult['content'] = [];
@@ -1837,7 +1876,7 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
                       maxImages: args.states === 'images' ? 8 : 4,
                     })
                   : [];
-              const f = formatStates(ex, results, warnings);
+              const f = formatStates(ex, results, warnings, (key) => seenBefore(ctx, `${frame.id}|${key}`));
               if (f.text) text += `\n\n${f.text}`;
               for (const im of f.images) extra.push({ type: 'text', text: `截图 ${im.label}` }, { type: 'image', data: im.png, mimeType: 'image/png' });
             }
@@ -1847,7 +1886,7 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
         const planned = c.lock?.session === ctx.id ? c.planOutstanding() : [];
         const tail =
           (c.pendingCheck.size ? `\n仍待自检的画板：${[...c.pendingCheck].join(', ')}` : '') +
-          (planned.length ? `\n规划中尚未绘制的页面：${planned.join(', ')}（画完并自检后编辑锁才释放）` : '') +
+          (planned.length ? `\n规划中尚未绘制的页面：${planned.join(', ')}${seenBefore(ctx, 'planned') ? '' : '（画完并自检后编辑锁才释放）'}` : '') +
           (!c.pendingCheck.size && !planned.length && frame ? doneText(c) : '') +
           (frame && checked ? openCommentsText(c, frame.id) : '');
         return {
