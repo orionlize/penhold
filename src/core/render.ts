@@ -46,6 +46,18 @@ export function hrefFrame(href: string | undefined): string | undefined {
   return href && href.startsWith('#') && href !== BACK_HREF ? href.slice(1) : undefined;
 }
 
+/**
+ * 播放预览时画板的屏幕高度：固定高度的画板用它自己的高度；auto 高度的画板按宽度推断设备屏幕
+ * （手机 ≤480 → 844，平板 ≤1100 → 宽的 4/3，桌面 → 宽的 10/16），内容超出时在屏幕内滚动。
+ */
+export function screenHeight(frame: { width: number; height: number | 'auto' }): number {
+  if (frame.height !== 'auto') return frame.height;
+  const w = frame.width;
+  if (w <= 480) return 844;
+  if (w <= 1100) return Math.round((w * 4) / 3);
+  return Math.round((w * 10) / 16);
+}
+
 const GENERIC = new Set(['serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui', 'ui-sans-serif', 'ui-serif', 'ui-monospace']);
 
 export const tokenVar = (name: string) => `--${name.replace(/[^a-zA-Z0-9_-]/g, '-')}`;

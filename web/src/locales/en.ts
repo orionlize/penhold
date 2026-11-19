@@ -280,7 +280,7 @@ export const en: Messages & PluralKeys = {
   "lock.unchecked_one": " · 1 board awaiting check",
   "note.placeholder": "Write something…",
   "note.byAi": "Note written by AI (design_annotate)",
-  "player.auto": "auto",
+  "player.screen": "device screen height, content scrolls inside",
   "player.backTip": "Go back (Backspace)",
   "player.exit": "Exit",
   "player.exitTip": "Exit player (Esc)",
