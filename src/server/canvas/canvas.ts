@@ -111,6 +111,10 @@ export class Canvas {
   private shooting: string | null = null;
   private round = 0;
   private lastAiRound: Op[][] = [];
+  /** 每个截图目标最近一次的截图（内存中，供下一次截图做像素对比）。 */
+  lastShots = new Map<string, { png: string; rev: number; scale: number }>();
+  /** 用户整体回退了 AI 上一轮：下一次 AI 调用时告诉它一次。 */
+  aiRoundReverted: { rev: number; ts: number; changes: number } | null = null;
   private userUndo: Op[][] = [];
   private userRedo: Op[][] = [];
   private changes: ChangeRec[] = [];
@@ -458,6 +462,22 @@ export class Canvas {
     return visit(f.root);
   }
 
+  /** 记下一次截图，返回同一目标的上一次截图（截图比例不同时不返回）。 */
+  rememberShot(target: string, png: string, scale: number) {
+    const prev = this.lastShots.get(target);
+    this.lastShots.delete(target);
+    this.lastShots.set(target, { png, rev: this.doc.rev, scale });
+    while (this.lastShots.size > 40) this.lastShots.delete(this.lastShots.keys().next().value!);
+    return prev && prev.scale === scale ? prev : undefined;
+  }
+
+  /** 取走“用户回退了 AI 上一轮”的提醒（只给一次）。 */
+  takeRevertNotice() {
+    const n = this.aiRoundReverted;
+    this.aiRoundReverted = null;
+    return n;
+  }
+
   undoInfo() {
     return { userUndo: this.userUndo.length, userRedo: this.userRedo.length, aiRound: this.lastAiRound.length > 0, userBase: Object.fromEntries(this.userBase) };
   }
@@ -480,7 +500,9 @@ export class Canvas {
     const ops = [...this.lastAiRound].reverse().flat();
     this.lastAiRound = [];
     try {
-      return this.commit('user', ops, { kind: 'revert_ai', system: true });
+      const tx = this.commit('user', ops, { kind: 'revert_ai', system: true });
+      this.aiRoundReverted = { rev: tx.rev, ts: tx.ts, changes: ops.length };
+      return tx;
     } catch (e) {
       throw new CanvasError(`回退失败（之后的改动与其冲突）：${(e as Error).message}`);
     }

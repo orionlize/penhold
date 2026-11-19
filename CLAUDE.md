@@ -40,7 +40,9 @@ Runtime data lives in `~/.penhold` (`DESIGN_MCP_HOME`).
 - `schema.ts`: input validation.
 - `proto.ts` / `protoEngine.ts`: the interaction expression language and runtime.
 - `states.ts`: explores interaction states for screenshot checks.
-- `designSystem.ts`, `designLint.ts`.
+- `designSystem.ts`, `designLint.ts`, `lintFix.ts` (the safe auto-fixes behind `design_lint_fix`).
+- `jsx.ts`: the JSX spelling of nodes used by `node_insert` / `node_replace` / `design_read`. It parses to Node JSON and never executes code.
+- `mermaid.ts`: parses and lays out the Mermaid flowchart subset used by `design_annotate`'s `flow`.
 
 The source of truth is the abstract node tree with stable ids; HTML is only a view of it.
 

@@ -33,26 +33,20 @@ const MOBILE_FEATURES = [
   ['画布双向协作', 'AI 改结构，你拖边距、改颜色，互不覆盖。'],
   ['能点的原型', '交互写进稿子里，导出后照样能点。'],
   ['自带设计系统', '亮暗主题、字阶、组件存在项目里，也能从 Tailwind / shadcn 导入。'],
+  ['画完先自检', '截图查问题、和上一张逐像素比对，有问题 AI 自己修。'],
+  ['流程图自动成图', 'AI 写几行 Mermaid，画板间的跳转箭头自动排好。'],
   ['稿子不出你的电脑', '画布和文件都在本机，断网也能打开、能改。'],
   ['导出就能用', '单文件 HTML + tokens.css，不是截图。'],
 ];
 
-const PROMISES = [
-  ['稿子不出你的电脑', '画布和文件都在本机，没有上传这一步。断网也能打开、能改。'],
-  ['不换工具，不开账号', '接在你正在用的 Agent 和模型上，没有席位费，也没有额度。'],
-  ['交付的是能用的代码', '导出单文件 HTML 和 tokens.css，不是一张截图或一个分享链接。'],
-];
-
-const DIFF = [
-  ['runtime:', 'vendor-cloud', 'local-daemon @ 127.0.0.1:4470'],
-  ['transport:', 'https + web editor', 'mcp → stdio | streamable-http'],
-  ['agent:', 'built-in chat only', 'any MCP client'],
-  ['model:', 'vendor-locked', 'bring-your-own'],
-  ['storage:', 'vendor://workspace/*', '~/.penhold/*.json  (git-able)'],
-  ['auth:', 'account + oauth', 'none'],
-  ['offline:', 'false', 'true'],
-  ['pricing:', 'seat/month + credits', '0  # MIT, no paywall'],
-  ['output:', 'png | share-link', 'index.html + tokens.css'],
+/** 对比区：独立开发者的顾虑 → Penhold 怎么做 → OpenPencil 那边 */
+const PAINS = [
+  ['不知道要做成什么样', 'AI 先问你几个问题：做什么产品、要哪几页、喜欢什么感觉，再动手。', '得先自己想清楚，再开始画。'],
+  ['不会配色和排版', '给你 3 种风格挑一种，浅色、深色两套自动配好，每一页都照着它来。', '颜色、字体、组件由你来挑。'],
+  ['怕一看就是 AI 做的', '列表页、详情页、表单各按成熟的做法排版，避开千篇一律的模板套路。', '做得好不好，看你自己的功力。'],
+  ['怕交出来有低级错误', '文字溢出、按钮太多、层级不清、配色看不清，交给你之前它会自己查一遍改掉。', '能查对比度、字太小、图层命名。'],
+  ['想先点一点试试', '画完就能点：切换 tab、倒计时、表单校验、页面跳转都能用。', '预览里能拨开关、拖滑块。'],
+  ['想自己改两笔', '直接在画布上拖间距、换颜色；看不顺眼就留条评论，AI 照着改。', '每一处都能自己动手改，还能多人一起改。'],
 ];
 
 const STEPS = [
@@ -287,91 +281,59 @@ export default function Home() {
           </div>
         </section>
 
-        {/* ───────── 对比（桌面端） ───────── */}
-        <section id="compare" className="compare wrap only-desk" aria-labelledby="compare-title">
-          <div className="compare-head">
-            <div className="section-head">
-              <Eyebrow>Frame 03 / 对比</Eyebrow>
-              <h2 id="compare-title" className="h2">
-                把设计工具从云端搬回本机
-              </h2>
-            </div>
-            <p className="compare-intro">同样是 AI 出设计稿，差别在稿子放在哪、归谁管。先看三句人话，再看逐行的配置对比。</p>
-          </div>
-
-          <div className="promises">
-            {PROMISES.map(([t, d]) => (
-              <div key={t} className="promise">
-                <h3 className="h3">{t}</h3>
-                <p className="muted">{d}</p>
+        {/* ───────── 对比 ───────── */}
+        <section id="compare" className="compare" aria-labelledby="compare-title">
+          <div className="compare-inner">
+            <div className="compare-head">
+              <div className="section-head">
+                <Eyebrow>
+                  <span className="only-desk">Frame 03 / 对比</span>
+                  <span className="only-mob">02 / 对比</span>
+                </Eyebrow>
+                <h2 id="compare-title" className="h2">
+                  <span className="only-desk">
+                    OpenPencil 帮你画，
+                    <br />
+                    Penhold 替你画完
+                  </span>
+                  <span className="only-mob">
+                    帮你画，
+                    <br />
+                    还是替你画完
+                  </span>
+                </h2>
               </div>
-            ))}
-          </div>
+              <p className="compare-intro">
+                独立开发没有设计师。OpenPencil 是开源的 Figma，适合会画图的人；Penhold 让你手边的 AI 直接把界面设计好、自己检查一遍，你只管看和提意见。
+              </p>
+            </div>
 
-          <figure className="diff" aria-label="云端 AI 设计工具与 Penhold 的配置逐行对比">
-            <div className="diff-bar">
-              <span className="diff-cmd">
-                <span className="muted">$</span>
-                <span>git diff --no-index cloud-ai-design.yaml penhold.yaml</span>
-              </span>
-              <span className="diff-stat">
-                <span className="mono-xs muted">9 changes</span>
-                <span className="diff-blocks" aria-hidden="true">
-                  <i />
-                  <i />
-                  <i className="on" />
-                  <i className="on" />
-                  <i className="on" />
-                </span>
-              </span>
+            <div className="pain-stage">
+              <div className="pain-floor-clip" aria-hidden="true">
+                <div className="pain-floor" />
+              </div>
+              <ul className="pain-grid">
+                {PAINS.map(([q, p, o], i) => (
+                  <li key={q} className="pain-card" data-card={i}>
+                    <h3>{q}</h3>
+                    <p>{p}</p>
+                    <p className="pain-other">OpenPencil：{o}</p>
+                  </li>
+                ))}
+              </ul>
             </div>
-            <div className="diff-files">
-              <span className="diff-file">
-                <span className="mono-xs muted">a/</span>
-                <span className="mono-xs muted">cloud-ai-design.yaml</span>
-              </span>
-              <span className="diff-file">
-                <span className="diff-file-b">
-                  <span className="mono-xs muted">b/</span>
-                  <b className="mono-xs">penhold.yaml</b>
-                </span>
-                <span className="tag fg">MIT</span>
-              </span>
+
+            <div className="verdict">
+              <p className="pick">
+                <span>适合用 OpenPencil</span>
+                你会用 Figma，想自己动手画。
+              </p>
+              <p className="pick us">
+                <span>适合用 Penhold</span>
+                你没有设计师，想让 AI 把界面做好，你来拍板。
+              </p>
             </div>
-            <div className="diff-body">
-              {DIFF.map(([k, a, b], i) => (
-                <div key={k} className="diff-row" data-row={i}>
-                  <span className="diff-cell del">
-                    <span className="ln">{i + 1}</span>
-                    <span className="sign">-</span>
-                    <span className="key">{k}</span>
-                    <s>{a}</s>
-                  </span>
-                  <span className="diff-cell add">
-                    <span className="ln">{i + 1}</span>
-                    <span className="sign">+</span>
-                    <span className="key">{k}</span>
-                    <b>{b}</b>
-                  </span>
-                </div>
-              ))}
-            </div>
-            <div className="diff-foot">
-              <span className="diff-metric">
-                <b>¥0</b>
-                <span>费用</span>
-              </span>
-              <span className="diff-metric">
-                <b>1 行</b>
-                <span>安装命令</span>
-              </span>
-              <span className="diff-metric">
-                <b>0 B</b>
-                <span>设计稿上传量</span>
-              </span>
-              <span className="mono-xs fg diff-ready">✓ ready to merge</span>
-            </div>
-          </figure>
+          </div>
         </section>
 
         {/* ───────── 接入 ───────── */}
@@ -416,7 +378,7 @@ export default function Home() {
           <div className="m-section m-install only-mob">
             <div className="m-install-head">
               <div className="section-head">
-                <Eyebrow>02 / 安装</Eyebrow>
+                <Eyebrow>03 / 安装</Eyebrow>
                 <h2 className="h2">一行配置，即刻接入</h2>
               </div>
               <p className="muted">标准 MCP 服务，无需账号与 API Key。</p>

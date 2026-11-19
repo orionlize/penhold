@@ -1,11 +1,13 @@
 // 播放（原型预览）：按导出渲染画板，悬停 / 聚焦 / 按下状态生效、输入框可输入；
 // 节点的 proto 交互（状态变量、点击动作、倒计时、条件显隐与样式）由 ProtoRuntime 驱动；
 // props.href 跳转到目标画板（"#<画板id>"）、返回（"#back"）或在新窗口打开外部链接。
+// 画板像设备屏幕一样以固定高度显示（auto 高度按宽度推断，见 screenHeight），内容超出时在屏幕内滚动，
+// sticky 的顶栏 / 底栏随之固定在屏幕上。
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { findFrameOfAddr } from '../../../src/core/doc';
 import { frameVars } from '../../../src/core/proto';
 import { entryFrame, isDocFrame, pageFrames } from '../../../src/core/states';
-import { BACK_HREF, hrefFrame, newSerializeState, renderFrame, RESET_CSS, serialize, tokensCss, type ProtoEntry } from '../../../src/core/render';
+import { BACK_HREF, hrefFrame, newSerializeState, renderFrame, RESET_CSS, screenHeight, serialize, tokensCss, type ProtoEntry } from '../../../src/core/render';
 import { Icon } from '../lib/icons';
 import { ProtoRuntime, type ProtoRuntimeType } from '../lib/protoRuntime';
 import { toast, useStore } from '../store';
@@ -13,6 +15,8 @@ import { t } from '../i18n';
 import { Select } from '../inspector/fields';
 
 const PLAY_CSS = `html,body{background:#fff}
+html{height:100%;overflow:auto;scrollbar-width:none}
+html::-webkit-scrollbar{display:none}
 [data-dm-href],[data-dm-click]{cursor:pointer}
 [data-dm-disabled],[data-dm-disabled] *{cursor:not-allowed}
 body.dm-hint :is([data-dm-href],[data-dm-click]){outline:2px solid rgba(37,99,235,.55);outline-offset:-2px;transition:outline-color .2s}`;
@@ -73,7 +77,6 @@ function PlayerView({ history }: { history: string[] }) {
   const iframe = useRef<HTMLIFrameElement>(null);
   const [ready, setReady] = useState(false);
   const [stageSize, setStageSize] = useState({ w: 0, h: 0 });
-  const [contentH, setContentH] = useState(0);
   const runtime = useRef<ProtoRuntimeType | null>(null);
   useEffect(() => () => runtime.current?.stopAll(), []);
 
@@ -110,7 +113,7 @@ function PlayerView({ history }: { history: string[] }) {
   // iframe 文档：一次性建立，之后只替换样式与内容
   useEffect(() => {
     const f = iframe.current!;
-    f.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><style>${RESET_CSS}\n${PLAY_CSS}</style><style id="dm-tokens"></style><style id="dm-rules"></style><style id="dm-frame"></style></head><body></body></html>`;
+    f.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><style>${RESET_CSS}\n${PLAY_CSS}</style><style id="dm-tokens"></style><style id="dm-rules"></style></head><body></body></html>`;
     f.onload = () => {
       const d = f.contentDocument!;
       runtime.current = new ProtoRuntime(f.contentWindow!, { go, back, open, follow });
@@ -135,10 +138,6 @@ function PlayerView({ history }: { history: string[] }) {
         else return;
         e.preventDefault();
       });
-      new ResizeObserver(() => {
-        const root = d.body.firstElementChild as HTMLElement | null;
-        setContentH(Math.ceil(root?.scrollHeight ?? 0));
-      }).observe(d.body);
       setReady(true);
     };
   }, []);
@@ -177,8 +176,6 @@ function PlayerView({ history }: { history: string[] }) {
     else rt.merge(frameVars(doc, frame));
     d.getElementById('dm-tokens')!.textContent = tokensCss(doc.tokens);
     d.getElementById('dm-rules')!.textContent = st.rules.join('\n');
-    // 固定高度的画板像设备屏幕一样在内部滚动；auto 高度由内容撑开
-    d.getElementById('dm-frame')!.textContent = frame.height === 'auto' ? 'html,body{overflow:hidden}' : 'html{height:100%;overflow:auto}';
     const sc = d.scrollingElement;
     const keep = lastFrame.current === frame.id ? { x: sc?.scrollLeft ?? 0, y: sc?.scrollTop ?? 0 } : { x: 0, y: 0 };
     d.body.innerHTML = html;
@@ -190,9 +187,9 @@ function PlayerView({ history }: { history: string[] }) {
 
   if (!doc) return null;
   const w = frame?.width ?? 0;
-  const h = frame ? (frame.height === 'auto' ? Math.max(contentH, 1) : frame.height) : 0;
+  const h = frame ? screenHeight(frame) : 0;
   const pad = 48;
-  const scale = Math.min(1, (stageSize.w - pad) / w || 1, frame?.height === 'auto' ? 1 : (stageSize.h - pad) / h || 1);
+  const scale = Math.min(1, (stageSize.w - pad) / w || 1, (stageSize.h - pad) / h || 1);
   const start = history[0];
 
   return (
@@ -206,7 +203,8 @@ function PlayerView({ history }: { history: string[] }) {
         </button>
         <Select className="player-frame pfield" label={t('tool.board')} value={cur} options={pageFrames(doc).map((f) => [f.id, f.name] as [string, string])} onChange={go} />
         <span className="player-meta">
-          {frame ? `${frame.width} × ${frame.height === 'auto' ? t('player.auto') : frame.height}` : ''}
+          {frame ? `${w} × ${h}` : ''}
+          {frame?.height === 'auto' ? ` · ${t('player.screen')}` : ''}
           {scale < 0.999 ? ` · ${Math.round(scale * 100)}%` : ''}
         </span>
         <div className="spacer" />

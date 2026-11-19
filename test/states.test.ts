@@ -51,6 +51,26 @@ test('exploreFrame enumerates click / input / timer states and exits', () => {
   assert.ok(!exploreFrame(doc, 'f1', { maxDepth: 2 }).states.some((s) => s.vars.sec === 60));
 });
 
+test('exploreFrame 输入取比较两侧的长度：超长报错态与合法可提交态都能到达', () => {
+  const doc = emptyDoc('c1');
+  applyOps(doc, [{ op: 'frame_create', index: 0, frame: { id: 'f1', name: 'Publish', width: 390, height: 844, root: { id: 'f1', type: 'page', proto: { vars: { title: '', done: false } } } } }]);
+  const tree = validateNodeInput({
+    type: 'form',
+    children: [
+      { type: 'input', id: 'in_title', render: 'input', proto: { bind: 'title' } },
+      { type: 'text', id: 'err', text: '标题最多 20 个字', proto: { show: 'len(title) > 20' } },
+      { type: 'button', id: 'b_submit', text: '发布', proto: { disabled: 'len(title) == 0 || len(title) > 20', onClick: [{ do: 'set', var: 'done', value: true }] } },
+      { type: 'text', id: 'toast', text: '发布成功', proto: { show: 'done' } },
+    ],
+  });
+  applyOps(doc, insertOps(doc, 'f1', undefined, [tree]).ops);
+  const ex = exploreFrame(doc, 'f1');
+  const lens = new Set(ex.states.map((s) => String(s.vars.title).length));
+  assert.ok(lens.has(21) && lens.has(20), `试过 20 与 21 个字：${[...lens]}`);
+  assert.ok(ex.states.some((s) => s.vars.done === true), '合法标题下能点发布');
+  assert.deepEqual(ex.unreachable, []);
+});
+
 test('stateAfter follows clicks and rejects hidden / disabled targets', () => {
   const doc = loginDoc();
   assert.equal(stateAfter(doc, 'f1', ['t_sms']).vars.tab, 'sms');

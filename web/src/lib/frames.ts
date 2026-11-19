@@ -444,11 +444,14 @@ export class FrameView {
       // 子节点越界与同级重叠
       const kids = [...el.children].filter((k): k is HTMLElement => (k as Element).nodeType === 1 && k.hasAttribute('data-node-id') && visible(k as HTMLElement));
       const flow = kids.filter((k) => !/^(absolute|fixed)$/.test(win.getComputedStyle(k).position));
+      // 滚动容器里内容超出可视范围是预期的（瀑布流、详情长内容），该方向不算越界
+      const scrollX = /^(auto|scroll)$/.test(cs.overflowX);
+      const scrollY = /^(auto|scroll)$/.test(cs.overflowY);
       for (const k of flow) {
         const kr = k.getBoundingClientRect();
         if (kr.width < 1 && kr.height < 1) continue;
-        const dx = Math.max(r.left - kr.left, kr.right - r.right);
-        const dy = Math.max(r.top - kr.top, kr.bottom - r.bottom);
+        const dx = scrollX ? 0 : Math.max(r.left - kr.left, kr.right - r.right);
+        const dy = scrollY ? 0 : Math.max(r.top - kr.top, kr.bottom - r.bottom);
         if (dx > 1 || dy > 1) {
           const clipped = cs.overflow === 'hidden' || cs.overflowX === 'hidden';
           issues.push({
@@ -513,33 +516,56 @@ export class FrameView {
   async imagesLoaded() {
     const d = this.docEl;
     if (!d) return;
-    await Promise.all([...d.images].map((img) => (img.complete ? null : new Promise((r) => ((img.onload = r), (img.onerror = r))))));
+    await waitImages(d);
   }
 
   /** region：按画板坐标裁切（缺省为目标节点的范围）。 */
   async screenshot(targetAddr: string, scale: number, region?: { x: number; y: number; width: number; height: number }): Promise<string> {
     const d = this.docEl!;
+    const win = this.iframe!.contentWindow!;
     const rootEl = this.element(this.frameId)!;
     const target = this.element(targetAddr);
     if (!target) throw new Error(`画布中找不到节点 ${targetAddr}（可能被隐藏）`);
-    await Promise.all([...d.images].map((img) => (img.complete ? null : new Promise((r) => ((img.onload = r), (img.onerror = r))))));
+    await waitImages(d);
     const rr = rootEl.getBoundingClientRect();
-    const fullW = Math.ceil(Math.max(rr.width, rootEl.scrollWidth));
-    const fullH = Math.ceil(Math.max(rr.height, rootEl.scrollHeight));
+    let tr = target.getBoundingClientRect();
+    // 截单个节点时，它可能在滚动容器的可视范围之外：克隆里展开这些容器（不裁切），并按未滚动时的位置取图
+    const unclip = new Map<string, string>();
+    if (target !== rootEl && !region) {
+      let ox = 0;
+      let oy = 0;
+      for (let p = target.parentElement; p; p = p.parentElement) {
+        const cs = win.getComputedStyle(p);
+        const id = p.getAttribute('data-node-id');
+        if (id && (cs.overflowX !== 'visible' || cs.overflowY !== 'visible')) {
+          // 改成 visible 后弹性子项的自动最小尺寸会变，保留原来的计算值，避免布局变化
+          unclip.set(id, `overflow:visible !important;min-width:${cs.minWidth === 'auto' ? '0px' : cs.minWidth};min-height:${cs.minHeight === 'auto' ? '0px' : cs.minHeight}`);
+          ox += p.scrollLeft;
+          oy += p.scrollTop;
+        }
+        if (p === rootEl) break;
+      }
+      if (ox || oy) tr = new DOMRect(tr.left + ox, tr.top + oy, tr.width, tr.height);
+    }
+    const fullW = Math.ceil(Math.max(rr.width, rootEl.scrollWidth, unclip.size ? tr.right - rr.left : 0));
+    const fullH = Math.ceil(Math.max(rr.height, rootEl.scrollHeight, unclip.size ? tr.bottom - rr.top : 0));
     const clone = d.body.cloneNode(true) as HTMLElement;
+    for (const [id, css] of unclip) {
+      const el = clone.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`);
+      if (el) el.style.cssText += `;${css}`;
+    }
+    // 位图按显示尺寸缩小后再内嵌：原图（常见 1000px 以上）直接转 base64 会让 SVG 有好几 MB，序列化与解码都很慢
+    const liveImgs = [...d.body.querySelectorAll('img')];
+    const cloneImgs = [...clone.querySelectorAll('img')];
+    liveImgs.forEach((img, i) => {
+      const small = scaledImage(img, scale);
+      if (small && cloneImgs[i]) cloneImgs[i].setAttribute('src', small);
+    });
     let html = new XMLSerializer().serializeToString(clone);
-    // 资源换成 data URL
+    // 其余资源换成 data URL（同一资源只取一次）
     const urls = new Set<string>();
     html.replace(/\/c\/[0-9a-f-]{36}\/assets\/[a-f0-9]{32}\.[a-z]+/g, (m) => (urls.add(m), m));
-    for (const u of urls) {
-      const blob = await (await fetch(u)).blob();
-      const data = await new Promise<string>((res) => {
-        const fr = new FileReader();
-        fr.onload = () => res(String(fr.result));
-        fr.readAsDataURL(blob);
-      });
-      html = html.split(u).join(data);
-    }
+    for (const u of urls) html = html.split(u).join(await assetDataUrl(u));
     html = html.replace(/^<body([^>]*)>/, '<div$1 class="dm-body">').replace(/<\/body>$/, '</div>');
     // body/html 选择器在 foreignObject 中不生效，改写到包裹元素上
     const css = [...d.querySelectorAll('style')]
@@ -550,7 +576,6 @@ export class FrameView {
     const img = new Image();
     img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
     await img.decode();
-    const tr = target.getBoundingClientRect();
     const sx = region ? region.x : tr.left - rr.left;
     const sy = region ? region.y : tr.top - rr.top;
     const w = Math.max(1, Math.ceil(region ? region.width : target === rootEl ? fullW : tr.width));
@@ -632,7 +657,12 @@ export async function probeStates(canvasId: string, getDoc: () => DesignDoc | nu
     let baseline = new Set<string>();
     let images = 0;
     const area = frame.width * h;
+    const started = performance.now();
+    const budget = req.budgetMs ?? Infinity;
     for (let i = 0; i < req.states.length; i++) {
+      const elapsed = performance.now() - started;
+      // 到点停止：返回的结果比请求的状态少，服务端据此报告哪些状态没来得及检查
+      if (elapsed > budget) break;
       const st = req.states[i];
       v.vars = st.vars;
       v.renderAll();
@@ -693,7 +723,8 @@ export async function probeStates(canvasId: string, getDoc: () => DesignDoc | nu
       }
       const want = req.images === 'all' || (req.images === 'issues' && issues.length > 0);
       let png: string | undefined;
-      if (want && images < req.maxImages) {
+      // 截图最费时：用掉六成预算后只做文字检查
+      if (want && images < req.maxImages && performance.now() - started < budget * 0.6) {
         images++;
         png = await v.screenshot(target, req.scale, target === frame.id ? region : undefined);
       }
@@ -703,6 +734,73 @@ export async function probeStates(canvasId: string, getDoc: () => DesignDoc | nu
   } finally {
     v.detach();
     iframe.remove();
+  }
+}
+
+/** 等待文档内图片加载完（用事件监听，不覆盖页面自己的 onload）。 */
+function waitImages(d: Document): Promise<unknown> {
+  return Promise.all(
+    [...d.images].map((img) =>
+      img.complete
+        ? null
+        : new Promise((r) => {
+            img.addEventListener('load', r, { once: true });
+            img.addEventListener('error', r, { once: true });
+          }),
+    ),
+  );
+}
+
+const assetCache = new Map<string, Promise<string>>();
+/** 资源转 data URL，按地址缓存（资源按内容寻址，地址不变内容就不变）。 */
+function assetDataUrl(u: string): Promise<string> {
+  let p = assetCache.get(u);
+  if (!p) {
+    p = fetch(u)
+      .then((r) => r.blob())
+      .then(
+        (blob) =>
+          new Promise<string>((res, rej) => {
+            const fr = new FileReader();
+            fr.onload = () => res(String(fr.result));
+            fr.onerror = () => rej(fr.error);
+            fr.readAsDataURL(blob);
+          }),
+      );
+    p.catch(() => assetCache.delete(u));
+    if (assetCache.size >= 200) assetCache.delete(assetCache.keys().next().value!);
+    assetCache.set(u, p);
+  }
+  return p;
+}
+
+const scaledCache = new Map<string, string>();
+/** 把明显大于显示尺寸的位图缩到显示尺寸 × 截图倍率（最多 2 倍）；无需缩小或无法绘制时返回 undefined。 */
+function scaledImage(img: HTMLImageElement, scale: number): string | undefined {
+  if (!img.complete || !img.naturalWidth || /\.svg(\?|$)/i.test(img.currentSrc || img.src)) return undefined;
+  const r = img.getBoundingClientRect();
+  if (r.width < 1 || r.height < 1) return undefined;
+  const k = Math.min(2, Math.max(1, scale));
+  // object-fit: cover 会裁切：按铺满显示框所需的倍率缩放
+  const ratio = Math.max((r.width * k) / img.naturalWidth, (r.height * k) / img.naturalHeight);
+  if (ratio > 0.75) return undefined;
+  const w = Math.max(1, Math.round(img.naturalWidth * ratio));
+  const h = Math.max(1, Math.round(img.naturalHeight * ratio));
+  const key = `${img.currentSrc || img.src}|${w}x${h}`;
+  const hit = scaledCache.get(key);
+  if (hit) return hit;
+  try {
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    c.getContext('2d')!.drawImage(img, 0, 0, w, h);
+    // webp 保留透明度且体积小；不支持时浏览器会退回 png
+    const url = c.toDataURL('image/webp', 0.9);
+    if (scaledCache.size >= 200) scaledCache.delete(scaledCache.keys().next().value!);
+    scaledCache.set(key, url);
+    return url;
+  } catch {
+    return undefined;
   }
 }
 

@@ -38,12 +38,13 @@ const GROUPS: { id: string; title: string; intro: string; rows: Row[] }[] = [
       ['frame_create', '新建画板，可同时给出根节点。已在 design_plan 中声明的页面不要再建。', 'name · width · height · root · index'],
       ['frame_update', '修改画板名称或尺寸。', 'frame_id · name · width · height'],
       ['frame_delete', '删除画板及全部节点。', 'frame_id'],
-      ['node_insert', '在父节点下插入一棵或多棵子树，一次插入整块区域；校验失败整次不生效。', 'parent_id · index · nodes · base_rev'],
-      ['node_replace', '用新子树整体替换节点，保持位置；带 base_rev 时若用户改过则拒绝。', 'node_id · node · base_rev'],
+      ['node_insert', '在父节点下插入一棵或多棵子树，一次插入整块区域；子树可写成 JSON 或更短的 JSX；校验失败整次不生效。', 'parent_id · index · nodes | jsx · base_rev'],
+      ['node_replace', '用新子树整体替换节点，保持位置；JSX 里带 keepChildren 的元素沿用原有子节点；带 base_rev 时若用户改过则拒绝。', 'node_id · node | jsx · base_rev'],
       ['node_update', '批量修改节点的 layout / box / style / props / states / proto / text / 显隐。', 'updates[{node_id, …}]'],
       ['node_move', '调整父节点或同级顺序。', 'node_id · parent_id · index'],
       ['node_delete', '删除一个或多个节点及其子树。', 'node_ids · base_rev'],
-      ['design_annotate', '在画板外写说明框、文字、箭头与连线；关闭已处理的用户评论。', 'add[{kind, frame, at, from, to, text, width}] · remove · clear · resolve'],
+      ['design_annotate', '在画板外写说明框、文字、箭头与连线；用 Mermaid 写整条流程时由服务端排版，箭头不穿过画板；关闭已处理的用户评论。', 'add[{kind, frame, at, from, to, via, text, width}] · flow{mermaid, at} · remove · clear · resolve'],
+      ['design_lint_fix', '把设计提醒里阶梯外的字号、间距、圆角和与令牌同值的色值自动换成最接近的令牌；可先预览改动。', 'frame_id · kinds · dry_run'],
     ],
   },
   {
@@ -52,9 +53,9 @@ const GROUPS: { id: string; title: string; intro: string; rows: Row[] }[] = [
     intro: '读稿、看用户改了什么、截图检查、导出。',
     rows: [
       ['design_outline', '画板或节点下的大纲（id、类型、组件名、文本摘要）。', 'frame_id · node_id · depth（≤3）'],
-      ['design_read', '读取节点或组件定义的完整内容。', 'node_id · component · depth · include_hidden'],
+      ['design_read', '读取节点或组件定义的完整内容；format:"jsx" 时以 JSX 返回，可改写后传回 node_replace。', 'node_id · component · depth · include_hidden · format'],
       ['design_changes', '返回某个版本号之后变化的节点与字段；origin:"user" 只看用户的手动改动。', 'since_rev · origin'],
-      ['design_screenshot', '截图并附渲染检查、设计提醒与交互状态检查；也可以模拟点击查看指定状态。', 'frame_id · node_id · scale · states · clicks · vars'],
+      ['design_screenshot', '截图并附渲染检查、设计提醒与交互状态检查，并与上一次截图做像素对比；也可以模拟点击查看指定状态。', 'frame_id · node_id · scale · states · clicks · vars'],
       ['design_export', '导出为单文件 HTML 或 zip。', 'frame_ids · out_path · split · interactive · inline_images · style_mode · width_mode'],
     ],
   },
@@ -66,7 +67,7 @@ export default function Tools() {
       <DocHead
         eyebrow="Docs / 参考"
         title="MCP 工具"
-        lede="Penhold 提供 24 个 MCP 工具。通常不需要你直接调用，AI 会按服务说明里的流程使用它们；这里列出来方便你理解 AI 在做什么、写提示词时点名。"
+        lede="Penhold 提供 25 个 MCP 工具。通常不需要你直接调用，AI 会按服务说明里的流程使用它们；这里列出来方便你理解 AI 在做什么、写提示词时点名。"
       />
       <Note>参数以服务端为准：客户端的工具列表里能看到每个参数的完整说明与取值范围。</Note>
       {GROUPS.map((g) => (

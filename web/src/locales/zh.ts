@@ -275,7 +275,7 @@ export const zh = {
   "lock.unchecked": " · 待自检 {n} 个画板",
   "note.placeholder": "写点什么…",
   "note.byAi": "AI 写的说明（design_annotate）",
-  "player.auto": "自适应",
+  "player.screen": "按设备屏幕高度，内容在屏幕内滚动",
   "player.backTip": "返回上一页（Backspace）",
   "player.exit": "退出",
   "player.exitTip": "退出播放（Esc）",

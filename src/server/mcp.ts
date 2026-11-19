@@ -1,4 +1,4 @@
-// MCP 工具（PRD 第 4、6 节）：会话 8 个（含 design_ask、design_preset、design_direction、design_system、design_image、design_annotate）、绘制 9 个（含 design_plan）、读取 4 个、导出 1 个（frame_update/frame_delete 分开计，共 23 个）。
+// MCP 工具（PRD 第 4、6 节）：会话 8 个（含 design_ask、design_preset、design_direction、design_system、design_image、design_annotate）、绘制 12 个（含 design_plan、tokens_set、tweaks_set、design_lint_fix）、读取 4 个、导出 1 个（frame_update/frame_delete 分开计，共 25 个）。
 import fs from 'node:fs';
 import path from 'node:path';
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -32,12 +32,15 @@ import {
 import { frameVars } from '../core/proto.js';
 import { exploreFrame, isDocFrame, lintProto, stateAfter, type Exploration, type NavOut, type ProtoWarning, type Step } from '../core/states.js';
 import { designCheckup, formatDesignNotes } from '../core/designLint.js';
+import { FIX_KINDS, planLintFixes, type FixKind, type FixPlan } from '../core/lintFix.js';
+import { applyKeepChildren, assertNoKeep, JsxError, parseJsx, toJsx } from '../core/jsx.js';
 import type { Annotation, DesignDoc, Node, Op, Origin, ProbeResult, ProtoValue, ShotReport } from '../core/types.js';
 import { applyAnnotations } from './canvas/annotate.js';
 import { ingestSrc } from './canvas/assets.js';
 import { hitThumbnail, ImageSearchError, searchImages } from './design/images.js';
 import { Canvas, CanvasError } from './canvas/canvas.js';
 import { buildExport } from './export/export.js';
+import { decodePng, diffBitmaps } from './pixelDiff.js';
 import { findDesignGuides } from './design/guides.js';
 import { directionDetail, directionExample, recentUsage, suggestDirections, systemFromDirection, type DirectionCard } from './design/directions.js';
 import {
@@ -125,12 +128,13 @@ const INSTRUCTIONS = `penhold-mcp 是本地设计画布。用户只能在画布�
 2. 问清需求与偏好：返回 needs_brief:true 时，在选设计方向、建设计系统、设令牌或绘制之前必须先问用户（服务端会拒绝这些调用）：design_ask() 在画布上出问卷。answered → 按回答设计；waiting → 请用户去画布填写并再次 design_ask()，期间不要绘制；skipped → 由你决定。用户已在对话里说清产品与页面内容时，在 design_plan 里用 enough_info 复述，问卷随后只问视觉偏好；只有用户亲口说过视觉偏好（风格、颜色、明暗或参考产品）时，才同时传 user_style 原样转述，跳过问卷。续改同一画布不必再问。
 3. design_plan：需求明确后立即声明本轮全部页面（单页也一样），早于阅读规范和 tokens_set，画布随即显示骨架屏。之后用返回的 frame_id 逐页绘制，不要再 frame_create 这些页面；计划有变时再调用一次。
 4. 定设计依据：项目有设计系统（canvas_open / design_plan 返回 design_system）时，它就是依据：先读它的 README，令牌、文字样式（text_styles）、组件与视觉基础照它执行，不再选方向卡片；首次写入时自动安装。否则用读文件工具完整阅读 canvas_open 返回的 design_guides（及其引用的同目录文件），令牌、组件与版式以它为准；与用户要求冲突时以用户为准。只有内置规范（kind:"builtin"）时，还要从 design_plan 返回的 design_directions 里选一张方向卡片（没有明显更合适的就选与常规解不同的那张），调用 design_direction({pick, concept, motif})（motif 是从题材里取的具体的物或形状；色板不贴题材时再传 primary 重算），再 design_system({action:"create", name}) 把它存成项目的设计系统（亮 / 暗主题、字阶、文字样式、间距、品牌手册）并安装，不要退回你惯用的默认配色与版式。项目里已有样式代码（CSS 变量、shadcn / Tailwind 主题）时改用 design_system({action:"import", path}) 从代码导入，精确取值。需要照片而用户没给素材时用 design_image 找图，每个图位用不同的图片。画布已记录 design_direction / design_preset 时沿用，不另起一套。design_plan 返回的 page_guides 列出该类页面的构图方案与平庸写法：选一个方案（不要默认第一个），避开平庸写法。
-5. 绘制：有设计系统时直接用它的令牌，文字按 text_styles 写 style，组件直接实例化；缺的令牌用 design_system({action:"update"}) 加进系统，而不是只在画布里 tokens_set（没有系统时才用 tokens_set 定义令牌）；画好的按钮、输入框、列表项等用 design_system({action:"save_components"}) 存进系统；node_update(node_id=frame_id) 设置画板根的背景与 padding，node_insert 一次插入整块区域，可复用块填 component。写工具可带 note（如“登录表单”），显示在画布的 AI 光标旁。
+5. 绘制：有设计系统时直接用它的令牌，文字按 text_styles 写 style，组件直接实例化；缺的令牌用 design_system({action:"update"}) 加进系统，而不是只在画布里 tokens_set（没有系统时才用 tokens_set 定义令牌）；画好的按钮、输入框、列表项等用 design_system({action:"save_components"}) 存进系统；node_update(node_id=frame_id) 设置画板根的背景与 padding，node_insert 一次插入整块区域（jsx 写法比 nodes 短），可复用块填 component；改已有区块用 design_read(format:"jsx") 读出、改写后 node_replace 传回。写工具可带 note（如“登录表单”），显示在画布的 AI 光标旁。
    - 只画界面内容：不画状态栏、刘海、Home 指示条、手机边框、浏览器地址栏、系统键盘，也不预留安全区（导航栏贴画板顶部，底部 tab 栏 / 按钮贴画板底部）。
+   - 画板高度保持 auto：画布显示整页内容，便于检查。播放预览时画板按设备屏幕高度显示（手机 844、平板宽的 4/3、桌面宽的 10/16；固定高度的画板用它自己的高度），内容超出时在屏幕内滚动。要在滚动时固定在屏幕上的顶部导航栏写 layout {position:"sticky", top:0, zIndex:10}，底部 tab 栏 / 操作栏写 {position:"sticky", bottom:0, zIndex:10}，并给它们背景色。不要为此把画板改成固定高度，也不要自己包一层滚动容器。
    - 页面内逻辑（tab 切换、倒计时、开关、弹窗、表单校验）用 proto 做成可交互，跨页面用 navigate。
 6. 自检：每轮结束前对改动过的画板调用 design_screenshot，自检完成后编辑锁才释放、用户才能手动修改。报告列出的每个问题（包括交互状态与交互逻辑问题）都要修复；报告通过也要按其中的清单逐项审查截图。用 node_update 修好后重新截图，直到截图与报告都没有问题。
 7. 流程说明（本轮的一部分，没写不算完成，不要在这之前向用户汇报）：涉及多个页面、交互、分支或业务规则时，自检通过后立即补充业务流程与说明（画板被重新声明后要重写；只改单个页面的视觉时不必）。design_screenshot 与 canvas_status 会列出还缺说明的画板。两种方式可组合：
-   - design_annotate 批注（不进入导出，无需自检）：画板之间用箭头表示跳转（异常 / 可选路径用 dashed），画板上方或下方用说明框写进入条件、主要操作、跳转去向、业务规则、交互状态、待确认问题。
+   - design_annotate 批注（不进入导出，无需自检）：画板之间用箭头表示跳转（异常 / 可选路径用 dashed；整条流程用 flow 传 Mermaid，服务端排版并绕开画板），画板上方或下方用说明框写进入条件、主要操作、跳转去向、业务规则、交互状态、待确认问题。
    - 需要随导出交付时，另画一个“业务流程与说明”画板（宽 1440，在 design_plan 中一起声明，通常排最前）：主流程图（每步一个卡片，props.href "#<画板id>" 链到对应页面，分支与异常路径单独标出）、各页说明、业务规则、交互状态清单；与 UI 画板共用令牌，同样要自检。
    说明不要画进 UI 画板；页面改动后同步更新或删除过时的说明（canvas_status 的 ai_annotations 列出你写过的批注）。
 
@@ -141,11 +145,48 @@ const navText = (n: NavOut) => (n.kind === 'navigate' ? `跳到画板 ${n.frame}
 const pathText = (path: Step[]) => path.map((p) => p.label).join(' → ');
 const fmtVars = (v: Record<string, ProtoValue>) => JSON.stringify(v).slice(0, 160);
 
+/** 用户整体回退了 AI 上一轮时给 AI 的一次性提醒。 */
+function revertNoticeText(n: { rev: number; changes: number }) {
+  return `用户在画布上整体回退了你上一轮的全部改动（rev ${n.rev}）。不要原样重做被回退的内容：先用 design_outline / design_changes(since_rev=${n.rev - 1}) 了解现状，必要时问用户为什么回退，再决定怎么改。`;
+}
+
+/**
+ * 与同一目标上一次截图的像素对比：报告变化区域（换算为设计 px），
+ * 或在这一画板确有修改、画面却没变时提醒修改没有生效。没有可比的上一张时返回空字符串。
+ */
+function shotDiffText(c: Canvas, target: string, frameId: string | undefined, prev: { png: string; rev: number; scale: number }, png: string): string {
+  if (prev.rev === c.doc.rev) return '';
+  const changes = c.changesSince(prev.rev).filter((ch) => {
+    if (ch.id.startsWith('token:')) return true;
+    if (ch.id === frameId) return true;
+    try {
+      return findFrameOfAddr(c.doc, ch.id) === frameId;
+    } catch {
+      return false;
+    }
+  });
+  if (!changes.length) return '';
+  const a = decodePng(prev.png);
+  const b = decodePng(png);
+  if (!a || !b) return '';
+  const d = diffBitmaps(a, b);
+  const k = 1 / prev.scale;
+  const ids = changes.slice(0, 6).map((ch) => ch.id).join('、') + (changes.length > 6 ? ' 等' : '');
+  if (!d.regions.length && !d.resized)
+    return `像素对比：与上次截图（rev ${prev.rev}）相比画面没有任何变化，但这期间改过 ${changes.length} 个节点或令牌（${ids}）。修改没有产生可见效果：检查是否改错了节点、被别的样式覆盖、元素被隐藏，或改的是没有被使用的组件 / 令牌。`;
+  const regions = d.regions.map((r) => `x${Math.round(r.x * k)} y${Math.round(r.y * k)} ${Math.round(r.width * k)}×${Math.round(r.height * k)}`).join('；');
+  const size = d.resized ? `尺寸从 ${Math.round(d.resized.from[0] * k)}×${Math.round(d.resized.from[1] * k)} 变为 ${Math.round(d.resized.to[0] * k)}×${Math.round(d.resized.to[1] * k)}；` : '';
+  return `像素对比：与上次截图（rev ${prev.rev}）相比，${size}变化区域（${target === frameId ? '画板' : '截图目标'}内坐标）${regions || '无'}，约占 ${(d.ratio * 100).toFixed(1)}%。确认这些区域都是这次想改的地方（改过 ${ids}）；想改的范围之外出现变化，说明修改波及了别的元素。`;
+}
+
 /** 交互状态检查的文字报告；返回文字与需要附上的截图（带说明）。 */
 /**
  * seen(key) 返回这段内容本会话里是否已原样给过（并记下）：重复截图同一画板时，
  * 没有新问题的状态列表与离开本页的跳转列表通常不变，只给简短版。
  */
+/** 交互状态检查的时间预算：低于 canvas.probe 的 60 秒超时，留出截图与回传的余量。 */
+const PROBE_BUDGET_MS = 45_000;
+
 function formatStates(ex: Exploration, results: ProbeResult[], warnings: ProtoWarning[], seen: (key: string) => boolean = () => false): { text: string; images: Array<{ label: string; png: string }> } {
   const lines: string[] = [];
   const images: Array<{ label: string; png: string }> = [];
@@ -179,6 +220,11 @@ function formatStates(ex: Exploration, results: ProbeResult[], warnings: ProtoWa
       if (fresh.length > 12) lines.push(`  - …另有 ${fresh.length - 12} 个`);
       if (r.png) images.push({ label: `${name} ${pathText(st.path)}${r.region ? `（变化区域 x${r.region.x} y${r.region.y} ${r.region.width}×${r.region.height}）` : ''}`, png: r.png });
     }
+    const missed = others.filter((st) => !results[st.index]);
+    if (missed.length)
+      lines.push(
+        `- ${missed.map((st) => `S${st.index}`).slice(0, 12).join('、')}${missed.length > 12 ? ' …' : ''} 共 ${missed.length} 个状态在检查时限（${PROBE_BUDGET_MS / 1000} 秒）内没来得及检查：用 design_screenshot 的 clicks / vars 单独查看，或减少画板上互相独立的开关（状态数按乘积增长）`,
+      );
     if (quiet.length) {
       const list = `${quiet.slice(0, 16).join('、')}${quiet.length > 16 ? ' …' : ''}`;
       lines.push(seen(`quiet:${list}`) ? `- 其余 ${quiet.length} 个状态没有新问题（同上次）` : `- 其余 ${quiet.length} 个状态没有新问题：${list}`);
@@ -232,6 +278,29 @@ const nodeShape = z
   })
   .describe('抽象节点');
 
+const JSX_GUIDE = `JSX 写法（jsx 参数，与 nodes 等价，只是拼写更短；不是 React，不执行代码）：
+- 标签名即 type；layout / box / style 的字段、hover / focus / active 与 proto 的字段（vars onClick onLoad show disabled styles bind）可直接写成属性，其余属性归入 props；也可整块写 layout={{…}} style={{…}} props={{…}}。id name component render 照写，hidden 即 meta.hidden。
+- 值："字符串"，或 {JSON 值}（键可不加引号）：数字 gap={16}、数组 padding={[12, 16]}、对象 border={{width: 1, color: "{color.border}"}}、布尔 wrap。令牌写在字符串里："{color.primary}"。
+- 元素内的文字即 text，原样保留（{{表达式}} 插值照写；多行逐行去首尾空白，适合 listStyle 列表）；文字中的 < & 写成 &lt; &amp;。文字与子元素不能混写，文字放进自己的元素。
+示例：<card direction="row" gap={12} padding={16} radius="{radius.md}" background="{color.surface}">
+  <img src="https://…" width={48} height={48} radius="{radius.full}" />
+  <title textStyle="heading5" fontSize="{size.md}" fontWeight={600}>本月预算</title>
+</card>`;
+
+const jsxArg = z.string().max(400_000).describe('子树的 JSX 写法（见 node_insert 说明），与 JSON 参数二选一');
+
+/** 写工具的子树参数：nodes（JSON）与 jsx 二选一，统一校验成 NodeInput。 */
+function nodesFromArgs(nodes: unknown[] | undefined, jsx: string | undefined): NodeInput[] {
+  if (nodes !== undefined && jsx !== undefined) throw new CanvasError('nodes 与 jsx 只能二选一', 'bad_args');
+  if (jsx !== undefined) {
+    const parsed = parseJsx(jsx);
+    assertNoKeep(parsed);
+    return parsed.map((n, i) => validateNodeInput(n, parsed.length > 1 ? `jsx[${i}]` : 'jsx'));
+  }
+  if (!nodes?.length) throw new CanvasError('需要 nodes 或 jsx', 'bad_args');
+  return nodes.map((n, i) => validateNodeInput(n, `nodes[${i}]`));
+}
+
 /** frame_create / node_replace 用的节点参数：字段同 node_insert 的 nodes[] 项，不在 schema 里再展开一份（服务端用 validateNodeInput 完整校验）。 */
 const nodeRef = (desc: string, typeOptional = false) => z.object({ type: typeOptional ? z.string().optional() : z.string() }).loose().describe(`${desc}。字段同 node_insert 的 nodes[] 项（Node 结构见 node_insert）`);
 
@@ -251,7 +320,7 @@ function fail(e: unknown): CallToolResult {
   const body: Json = { error: err.message };
   if (err.code) body.code = err.code;
   if (err.data) body.detail = err.data;
-  if (!(e instanceof DocError || e instanceof CanvasError || e instanceof ValidationError)) console.error(e);
+  if (!(e instanceof DocError || e instanceof CanvasError || e instanceof ValidationError || e instanceof JsxError)) console.error(e);
   return { isError: true, content: [{ type: 'text', text: JSON.stringify(body) }] };
 }
 
@@ -581,7 +650,9 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
       await hub.ensureBrowser(c);
       await c.acquireLock(ctx.id);
       const auto = opts.noAuto ? undefined : autoInstall(c);
-      const { ops, affected, extra: extra0 } = await compute(c);
+      const reverted = c.takeRevertNotice();
+      const { ops, affected, extra: extra1 } = await compute(c);
+      const extra0 = reverted ? { ...extra1, user_reverted_ai_round: revertNoticeText(reverted) } : extra1;
       const extra = auto ? { ...extra0, design_system_installed: `已自动安装项目默认设计系统「${auto.name}」v${auto.version}` } : extra0;
       if (!ops.length) return ok({ rev: c.doc.rev, affected: [], needs_check: c.pendingCheck.size > 0, note: '没有变化', ...extra });
       const tx = c.commit('ai', ops, { session: ctx.id, note });
@@ -1152,6 +1223,10 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
             : {}),
           ...summarizeNotes(c),
           ...(!c.pendingCheck.size && missingNotesHint(c) ? { missing_notes: missingNotesHint(c) } : {}),
+          ...((): Json => {
+            const n = c.takeRevertNotice();
+            return n ? { user_reverted_ai_round: revertNoticeText(n) } : {};
+          })(),
         };
       }),
   );
@@ -1165,7 +1240,7 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
     {
       title: '说明批注',
       description:
-        '在画布上为设计稿补充业务流程与说明：rect 说明框（多行文字：页面说明、业务规则、交互状态、待确认问题）、text 文字（流程标题 / 步骤标签）、arrow 箭头（页面间跳转与流程走向，可跨画板）、line 连线。批注标有 AI，不进入设计稿、导出与撤销栈，不需要编辑锁和自检。坐标相对所在画板左上角（画板横排、顶端 y=0）；画板上方 40px 是标题与工具栏，说明框底边须在 y=-40 以上（越界会自动上移），也可放在画板下方，不要放进画板内部。返回 frame_layout（各画板 x 与宽度）、box_xywh（说明框位置）与 warnings（调整与遮挡）。传 id 更新已有批注；remove 删除指定 id；clear:true 删除全部 AI 批注，clear:"<画板id>" 只删该画板的。用户的批注不能改删；用户评论按意见改完、design_screenshot 自检确认无误后，用 resolve:[评论编号] 关闭（所在画板仍待自检时会被拒绝），只传 resolve 时 add 可省略。',
+        '在画布上为设计稿补充业务流程与说明。画流程图时优先用 flow（Mermaid，服务端自动排版，箭头不穿过画板）；单条说明用 add：rect 说明框（多行文字：页面说明、业务规则、交互状态、待确认问题）、text 文字（流程标题 / 步骤标签）、arrow 箭头（页面间跳转与流程走向，可跨画板）、line 连线。批注标有 AI，不进入设计稿、导出与撤销栈，不需要编辑锁和自检。坐标相对所在画板左上角（画板横排、顶端 y=0）；画板上方 40px 是标题与工具栏，说明框底边须在 y=-40 以上（越界会自动上移），也可放在画板下方，不要放进画板内部。返回 frame_layout（各画板 x 与宽度）、box_xywh（说明框位置）与 warnings（调整与遮挡）。传 id 更新已有批注；remove 删除指定 id；clear:true 删除全部 AI 批注，clear:"<画板id>" 只删该画板的。用户的批注不能改删；用户评论按意见改完、design_screenshot 自检确认无误后，用 resolve:[评论编号] 关闭（所在画板仍待自检时会被拒绝），只传 resolve 时 add 可省略。',
       inputSchema: {
         add: z
           .array(
@@ -1177,6 +1252,7 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
               at: pointArg.optional().describe('rect / text 的左上角位置'),
               from: pointArg.optional().describe('arrow / line 起点'),
               to: pointArg.optional().describe('arrow / line 终点（箭头指向此处）'),
+              via: z.array(pointArg).max(8).optional().describe('arrow / line 的中间折点（绕开画板时用）'),
               text: z.string().max(4000).optional().describe('rect / text 的内容，可换行'),
               width: z.number().min(40).max(1200).optional().describe('rect / text 宽度 px，说明框缺省 320，通常与画板同宽'),
               height: z.number().min(24).max(4000).optional().describe('rect 最小高度 px；缺省按文字估算'),
@@ -1189,11 +1265,28 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
         remove: z.array(z.string()).max(300).optional().describe('要删除的 AI 批注 id'),
         clear: z.union([z.boolean(), z.string()]).optional().describe('true 删除全部 AI 批注；传画板 id 只删该画板的'),
         resolve: z.array(z.number().int().min(1)).max(200).optional().describe('已按意见改完并自检确认的用户评论编号（canvas_status comments 里的 n），关闭后从画布移除'),
+        flow: z
+          .object({
+            mermaid: z.string().max(40_000).describe('Mermaid flowchart，如 "flowchart LR\n  login --> home\n  home -->|下单| pay{支付成功?}\n  pay -.->|失败| home"'),
+            at: z.tuple([z.number(), z.number()]).optional().describe('流程图左上角；缺省放在所有画板下方'),
+            frame: z.string().optional().describe('at 相对的画板 id；缺省为画布世界坐标'),
+            width: z.number().min(80).max(600).optional().describe('说明框宽度，缺省 200'),
+          })
+          .optional()
+          .describe('用 Mermaid 写流程，服务端排版：普通节点生成说明框（{判断} 为浅黄、(起止) 为浅绿），id 或文字等于画板 id / 名称的节点直接指向该画板；相邻画板间画横向箭头，不相邻的从画板上方绕行；-.-> 为虚线（异常 / 可选路径），|文字| 为连线标签。重画前先 remove 返回的 flow.ids 或 clear'),
       },
     },
     async (args) =>
-      read((c) => {
-        const r = applyAnnotations(c, args);
+      read(async (c) => {
+        const heights = new Map<string, number>();
+        if (args.flow) {
+          const auto = c.doc.frames.filter((f) => f.height === 'auto').map((f) => f.id);
+          if (auto.length) {
+            const sizes = await c.measure(auto);
+            for (const [id, sz] of Object.entries(sizes)) heights.set(id, Math.round(sz.height));
+          }
+        }
+        const r = applyAnnotations(c, args, heights);
         if (!c.clients.size) hub.ensureBrowser(c, 1).catch(() => {});
         const missing = framesMissingNotes(c);
         if (args.resolve?.length && !args.add?.length && !args.remove?.length && args.clear === undefined) {
@@ -1373,18 +1466,19 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
     'node_insert',
     {
       title: '插入节点',
-      description: `在 parent_id 下的 index 位置（缺省末尾）插入一棵或多棵节点子树，一次可插入一整个区块。校验失败时整次调用不生效并指出出错节点与字段。parent_id 可以是画板 id、节点 id 或组件定义内节点（修改定义会同步到所有实例）。\n${NODE_GUIDE}\n${PROTO_GUIDE}`,
+      description: `在 parent_id 下的 index 位置（缺省末尾）插入一棵或多棵节点子树，一次可插入一整个区块。校验失败时整次调用不生效并指出出错节点与字段。parent_id 可以是画板 id、节点 id 或组件定义内节点（修改定义会同步到所有实例）。子树用 nodes（JSON）或 jsx（同一结构的 JSX 写法，更短，推荐）二选一。\n${NODE_GUIDE}\n${JSX_GUIDE}\n${PROTO_GUIDE}`,
       inputSchema: {
         parent_id: z.string(),
         index: z.number().int().min(0).optional(),
-        nodes: z.array(nodeShape).min(1),
+        nodes: z.array(nodeShape).min(1).optional(),
+        jsx: jsxArg.optional(),
         base_rev: z.number().int().optional(),
         note: noteArg,
       },
     },
     async (args) =>
       write(async (c) => {
-        const inputs = args.nodes.map((n, i) => validateNodeInput(n, `nodes[${i}]`));
+        const inputs = nodesFromArgs(args.nodes, args.jsx);
         assertUnlocked(c.doc, args.parent_id);
         const pre = await ingestImages(c, ctx.cwd, inputs);
         const prep = insertOps(c.doc, args.parent_id, args.index, inputs);
@@ -1399,13 +1493,22 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
     'node_replace',
     {
       title: '替换节点',
-      description: '用新的节点子树整体替换 node_id（保持在父节点中的位置，缺省沿用原 id；Node 结构见 node_insert）。带 base_rev 时，若目标子树在其后被用户改过则拒绝并返回变化字段，请先读后写。',
-      inputSchema: { node_id: z.string(), node: nodeRef('新的节点子树'), base_rev: z.number().int().optional(), note: noteArg },
+      description: '用新的节点子树整体替换 node_id（保持在父节点中的位置，缺省沿用原 id；Node 结构见 node_insert）。子树用 node（JSON）或 jsx（一个根元素）二选一；常用流程是 design_read(format:"jsx") 读出后改写再传回，jsx 中带 keepChildren 的元素（须写 id）沿用该节点原有的子节点，只改它自身的字段，读取结果里的 stub 存根改成 keepChildren 即可。带 base_rev 时，若目标子树在其后被用户改过则拒绝并返回变化字段，请先读后写。',
+      inputSchema: { node_id: z.string(), node: nodeRef('新的节点子树').optional(), jsx: jsxArg.optional(), base_rev: z.number().int().optional(), note: noteArg },
     },
     async (args) =>
       write(async (c) => {
-        const input = validateNodeInput(args.node, 'node');
         const r = resolveAddress(c.doc, args.node_id);
+        let input: NodeInput;
+        if (args.jsx !== undefined) {
+          if (args.node !== undefined) throw new CanvasError('node 与 jsx 只能二选一', 'bad_args');
+          const parsed = parseJsx(args.jsx);
+          if (parsed.length !== 1) throw new CanvasError(`node_replace 的 jsx 只能有一个根元素（收到 ${parsed.length} 个）`, 'bad_args');
+          const kids = new Map<string, Node[]>();
+          walkTree(r.target.node, (n) => kids.set(n.id, n.children ?? []));
+          input = validateNodeInput(applyKeepChildren(parsed, (id) => (kids.has(id) ? clone(kids.get(id)!) : undefined))[0], 'jsx');
+        } else if (args.node !== undefined) input = validateNodeInput(args.node, 'node');
+        else throw new CanvasError('需要 node 或 jsx', 'bad_args');
         if (!r.target.parent) throw new CanvasError('不能替换画板或组件的根节点；请用 frame_update / node_update');
         assertUnlocked(c.doc, args.node_id, true);
         if (args.base_rev !== undefined) {
@@ -1588,6 +1691,52 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
   );
 
   server.registerTool(
+    'design_lint_fix',
+    {
+      title: '体检自动修复',
+      description:
+        '自动修复设计体检里可以机械替换的问题，只把直接写的数值 / 色值换成已有令牌：off_scale（文字字号 → 最接近的 size.*）、off_space（padding / margin / gap → 最接近的 space.*）、off_radius（圆角 → 最接近的 radius.*，四角不同的造型圆角不动）、raw_colors（与某个 color.* 取值完全相同的色值 → 该令牌，同值令牌按用途分不出时跳过）。与最近一档相差过大的值不改，列在 skipped 里由你判断是否新增一档令牌。组件内的节点改的是组件定义。dry_run:true 只返回将要做的改动。改完后画板要重新 design_screenshot 自检。层级、粗体、胶囊、卡片嵌套等判断性的提醒不在此列，仍需手动修改。',
+      inputSchema: {
+        frame_id: z.string().optional().describe('缺省为全部画板'),
+        kinds: z.array(z.enum(FIX_KINDS as [FixKind, ...FixKind[]])).min(1).optional().describe('缺省为全部四类'),
+        dry_run: z.boolean().optional(),
+        note: noteArg,
+      },
+    },
+    async (args) => {
+      const plan = (c: Canvas): FixPlan => {
+        const frames = args.frame_id ? c.doc.frames.filter((f) => f.id === args.frame_id) : c.doc.frames;
+        if (args.frame_id && !frames.length) throw new CanvasError(`画板 ${args.frame_id} 不存在`, 'not_found');
+        return planLintFixes(c.doc, frames, args.kinds ? new Set(args.kinds) : undefined);
+      };
+      const fmtChange = (ch: FixPlan['changes'][number]) => `${ch.id} ${ch.field} ${JSON.stringify(ch.from)} → ${JSON.stringify(ch.to)}`;
+      const fmtSkip = (sk: FixPlan['skipped'][number]) => `${sk.id} ${sk.field} ${JSON.stringify(sk.value)}：${sk.reason}`;
+      if (args.dry_run)
+        return read((c) => {
+          const p = plan(c);
+          return { dry_run: true, changes: p.changes.slice(0, 200).map(fmtChange), ...(p.changes.length > 200 ? { truncated: p.changes.length - 200 } : {}), ...(p.skipped.length ? { skipped: p.skipped.slice(0, 60).map(fmtSkip) } : {}) };
+        });
+      return write(async (c) => {
+        const p = plan(c);
+        const scratch = clone(c.doc);
+        const ops: Op[] = [];
+        const affected: Affected[] = [];
+        for (const { id, patch } of p.patches) {
+          const res = updateOps(scratch, id, patch, 'ai');
+          applyOps(scratch, res.ops);
+          ops.push(...res.ops);
+          const n = getIndex(scratch).get(id)?.node;
+          affected.push({ id, type: n?.type ?? '?' });
+        }
+        const extra: Json = { changes: p.changes.slice(0, 200).map(fmtChange) };
+        if (p.changes.length > 200) extra.truncated = p.changes.length - 200;
+        if (p.skipped.length) extra.skipped = p.skipped.slice(0, 60).map(fmtSkip);
+        return { ops, affected, extra };
+      }, args.note ?? '体检自动修复');
+    },
+  );
+
+  server.registerTool(
     'tweaks_set',
     {
       title: '设置可调节项（Tweaks）',
@@ -1665,12 +1814,13 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
     {
       title: '读取节点或组件',
       description:
-        '按节点 id 或组件名（二选一，必填）读取完整字段，保留令牌引用。depth 以内的后代完整给出，超出的只给存根。按组件名读取时额外返回各实例的 id 与 overrides。同时返回用到的令牌值、字体、图片本地路径和画布实测尺寸（computed）。用于把设计稿实现为代码。',
+        '按节点 id 或组件名（二选一，必填）读取完整字段，保留令牌引用。depth 以内的后代完整给出，超出的只给存根。按组件名读取时额外返回各实例的 id 与 overrides。同时返回用到的令牌值、字体、图片本地路径和画布实测尺寸（computed）。用于把设计稿实现为代码，或改写后写回。format:"jsx" 时节点与组件定义以 JSX 返回（比 JSON 短），可改写后直接传给 node_replace 的 jsx；其中的 stub 存根写回时改成 keepChildren。',
       inputSchema: {
         node_id: z.string().optional(),
         component: z.string().optional(),
         depth: z.number().int().min(0).max(10).optional().describe('默认 3'),
         include_hidden: z.boolean().optional(),
+        format: z.enum(['json', 'jsx']).optional().describe('默认 json'),
       },
     },
     async (args) =>
@@ -1754,6 +1904,11 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
           if (Object.keys(sizes).length)
             out.computed = Object.fromEntries(Object.entries(sizes).map(([k, v]) => [k, { w: Math.round(v.width), h: Math.round(v.height) }]));
           else out.computed_note = '画布页面未在线，未返回实测尺寸';
+        }
+        if (args.format === 'jsx') {
+          if (out.node) out.jsx = toJsx(out.node as Json);
+          delete out.node;
+          if (out.components) out.components = Object.fromEntries(Object.entries(out.components as Json).map(([k, v]) => [k, v ? toJsx(v as Json) : null]));
         }
         return out;
       }),
@@ -1850,10 +2005,17 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
 
         const shot = await c.screenshot(target, scale);
         let text = formatReport(target, shot.report, seenBefore(ctx, 'report'));
+        const prevShot = c.rememberShot(target, shot.png, scale);
+        if (prevShot) {
+          const diff = shotDiffText(c, target, frameId, prevShot, shot.png);
+          if (diff) text += `\n${diff}`;
+        }
         if (frame) {
           const found = designCheckup(c.doc, frame);
           const notes = formatDesignNotes(found, found.length > 0 && seenBefore(ctx, 'lint'));
           if (notes) text += `\n\n${notes}`;
+          const fixable = found.filter((n) => (FIX_KINDS as string[]).includes(n.kind)).map((n) => n.kind);
+          if (fixable.length) text += `\n其中 ${fixable.join('、')} 可用 design_lint_fix({frame_id:"${frame.id}"}) 自动换成最接近的令牌（先 dry_run 看改动）。`;
         }
         const extra: CallToolResult['content'] = [];
         let checked = !!frame;
@@ -1874,6 +2036,7 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
                       dedupe: true,
                       scale,
                       maxImages: args.states === 'images' ? 8 : 4,
+                      budgetMs: PROBE_BUDGET_MS,
                     })
                   : [];
               const f = formatStates(ex, results, warnings, (key) => seenBefore(ctx, `${frame.id}|${key}`));

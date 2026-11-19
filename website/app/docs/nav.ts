@@ -23,7 +23,7 @@ export const DOC_GROUPS: DocGroup[] = [
   {
     group: '参考',
     pages: [
-      { slug: 'tools', title: 'MCP 工具', desc: '全部 24 个工具的用途与主要参数。' },
+      { slug: 'tools', title: 'MCP 工具', desc: '全部 25 个工具的用途与主要参数。' },
       { slug: 'config', title: '命令与配置', desc: '命令行、环境变量、数据目录。' },
       { slug: 'faq', title: '常见问题', desc: '浏览器没打开、端口占用、画布找不回等。' },
     ],

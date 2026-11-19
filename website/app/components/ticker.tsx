@@ -4,7 +4,7 @@ import { useEffect, useSyncExternalStore } from 'react';
 
 /**
  * 全站共享的两个节拍，对应设计稿 proto 里的 t（900ms）与 h（2200ms）倒计时。
- * 纯视觉的状态通过 <html data-t / data-h / data-r> 交给 CSS，只有需要数字的组件才订阅。
+ * 纯视觉的状态通过 <html data-t / data-h / data-c> 交给 CSS，只有需要数字的组件才订阅。
  */
 type Snap = { t: number; h: number };
 
@@ -17,7 +17,7 @@ function emit(next: Snap) {
   const root = document.documentElement;
   root.dataset.t = String(next.t % 2);
   root.dataset.h = String(next.h % 4);
-  root.dataset.r = String(next.t % 9);
+  root.dataset.c = String(next.t % 6);
   listeners.forEach((l) => l());
 }
 

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { applyOps, emptyDoc, getIndex, resolveAddress } from '../src/core/doc.ts';
 import { insertOps, updateOps, checkUserOps } from '../src/core/edit.ts';
 import { validateAnnotation, validateNodeInput } from '../src/core/schema.ts';
-import { newSerializeState, renderFrame, serialize, styleCss } from '../src/core/render.ts';
+import { newSerializeState, renderFrame, screenHeight, serialize, styleCss } from '../src/core/render.ts';
 import type { DesignDoc } from '../src/core/types.ts';
 
 function setup(): DesignDoc {
@@ -388,4 +388,11 @@ test('tweaks: set_tweaks 可撤销，校验令牌存在，导出带调节面板'
   assert.match(buildExport(doc, '/tmp', { interactive: false }).data.toString('utf8'), /^(?![\s\S]*dm-tw)/);
   applyOps(doc, inv);
   assert.equal(doc.tweaks, undefined);
+});
+
+test('screenHeight: preview uses the frame height, or a device screen for auto frames', () => {
+  assert.equal(screenHeight({ width: 390, height: 600 }), 600);
+  assert.equal(screenHeight({ width: 390, height: 'auto' }), 844);
+  assert.equal(screenHeight({ width: 768, height: 'auto' }), 1024);
+  assert.equal(screenHeight({ width: 1440, height: 'auto' }), 900);
 });

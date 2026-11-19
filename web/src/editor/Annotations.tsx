@@ -818,7 +818,8 @@ function Mark({ note, origin, zoom, still, fx }: { note: Annotation; origin: [nu
   const pts = note.pts.map(([x, y]) => `${x - b.x},${y - b.y}`).join(' ');
   let head = '';
   if (note.kind === 'arrow') {
-    const [a, c] = [note.pts[0], note.pts[note.pts.length - 1]];
+    // 折线箭头按最后一段定方向
+    const [a, c] = [note.pts[Math.max(0, note.pts.length - 2)], note.pts[note.pts.length - 1]];
     const ang = Math.atan2(c[1] - a[1], c[0] - a[0]);
     const len = 14 / Math.max(zoom, 0.25);
     const tip = (d: number) => `${c[0] - b.x - len * Math.cos(ang + d)},${c[1] - b.y - len * Math.sin(ang + d)}`;

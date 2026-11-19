@@ -1,5 +1,6 @@
 // AI 说明批注（design_annotate）：便签、文字、箭头、连线，写在画布上但不进入设计稿、导出与撤销栈。
 import { FRAME_GAP, frameX, HEADER_CLEARANCE, newId, resolveAddress } from '../../core/doc.js';
+import { connect, FlowError, layoutFlow, parseFlow } from '../../core/mermaid.js';
 import type { Annotation, StrokeDash } from '../../core/types.js';
 import type { Canvas } from './canvas.js';
 import { CanvasError } from './canvas.js';
@@ -16,6 +17,8 @@ export interface AiNoteInput {
   at?: PointInput;
   from?: PointInput;
   to?: PointInput;
+  /** arrow / line 的中间折点。 */
+  via?: PointInput[];
   text?: string;
   width?: number;
   height?: number;
@@ -29,6 +32,119 @@ export interface AnnotateArgs {
   clear?: boolean | string;
   /** 按意见改完并自检后要关闭的用户评论编号。 */
   resolve?: number[];
+  /** Mermaid 流程图：服务端排版成说明框与箭头。 */
+  flow?: FlowInput;
+}
+
+export interface FlowInput {
+  mermaid: string;
+  /** 流程图左上角；缺省放在所有画板下方。 */
+  at?: [number, number];
+  /** at 相对的画板。 */
+  frame?: string;
+  /** 说明框宽度，缺省 200。 */
+  width?: number;
+}
+
+const FLOW_COLORS = { decision: '#FDF1D6', terminal: '#E3F4E8' } as const;
+
+/**
+ * 把 Mermaid 流程图转成批注：普通节点排版成说明框，id 或文字与画板 id / 名称相同的节点直接指向该画板。
+ * 画板之间相邻的跳转画成画板间的横向箭头，不相邻的从画板上方绕行，避免穿过中间的画板。
+ * frameHeights 给出各画板的实际高度（auto 高度的画板由调用方实测）。
+ */
+export function flowToNotes(c: Canvas, flow: FlowInput, frameHeights: Map<string, number>): { notes: AiNoteInput[]; frames: string[]; boxes: number } {
+  const doc = c.doc;
+  let g;
+  try {
+    g = parseFlow(flow.mermaid);
+  } catch (e) {
+    if (e instanceof FlowError) throw new CanvasError(`flow：${e.message}`, 'bad_args');
+    throw e;
+  }
+  const frameOf = new Map<string, string>();
+  for (const n of g.nodes) {
+    const f = doc.frames.find((q) => q.id === n.id || q.name === n.id || (n.text !== n.id && q.name === n.text));
+    if (f) frameOf.set(n.id, f.id);
+  }
+  const frameRect = (id: string) => {
+    const f = doc.frames.find((q) => q.id === id)!;
+    return { x: frameX(doc, id)!, y: 0, w: f.width, h: frameHeights.get(id) ?? (f.height === 'auto' ? 900 : f.height) };
+  };
+  const bw = Math.round(flow.width ?? 200);
+  const textOf = new Map(g.nodes.map((n) => [n.id, n.text]));
+  const size = (id: string) => ({ w: bw, h: lineCount(textOf.get(id) ?? id, bw - BOX_PAD * 2, BOX_FONT) * BOX_LINE + BOX_PAD * 2 });
+  const placed = layoutFlow(g, size, new Set(frameOf.keys()));
+  let ox: number;
+  let oy: number;
+  if (flow.at) {
+    const fx = flow.frame === undefined ? 0 : frameX(doc, flow.frame);
+    if (fx === undefined) throw new CanvasError(`flow.frame：画板 ${flow.frame} 不存在`, 'not_found');
+    [ox, oy] = [fx + flow.at[0], flow.at[1]];
+  } else {
+    ox = 0;
+    oy = Math.max(0, ...doc.frames.map((f) => frameRect(f.id).h)) + 160;
+  }
+  const rect = new Map<string, { x: number; y: number; w: number; h: number }>();
+  for (const p of placed) rect.set(p.id, { x: p.x + ox, y: p.y + oy, w: p.w, h: p.h });
+  for (const [id, f] of frameOf) rect.set(id, frameRect(f));
+
+  const notes: AiNoteInput[] = [];
+  for (const n of g.nodes) {
+    if (frameOf.has(n.id)) continue;
+    const r = rect.get(n.id)!;
+    notes.push({ kind: 'rect', at: [r.x, r.y], width: r.w, height: r.h, text: n.text, ...(n.shape !== 'box' ? { color: FLOW_COLORS[n.shape] } : {}) });
+  }
+  const order = doc.frames.map((f) => f.id);
+  const pairLane = new Map<string, number>();
+  let above = 0;
+  for (const e of g.edges) {
+    if (e.from === e.to) continue;
+    const a = rect.get(e.from)!;
+    const b = rect.get(e.to)!;
+    const fa = frameOf.get(e.from);
+    const fb = frameOf.get(e.to);
+    let pts: Array<[number, number]>;
+    if (fa && fb && fa !== fb) {
+      const ia = order.indexOf(fa);
+      const ib = order.indexOf(fb);
+      const key = [fa, fb].sort().join('|');
+      const lane = pairLane.get(key) ?? 0;
+      pairLane.set(key, lane + 1);
+      if (Math.abs(ia - ib) === 1) {
+        // 相邻画板：画板间空白里的横向箭头，往返两条错开
+        const y = Math.round(Math.min(a.h, b.h, 640) / 2) + lane * 36;
+        pts = ia < ib ? [[a.x + a.w, y], [b.x, y]] : [[a.x, y], [b.x + b.w, y]];
+      } else {
+        // 不相邻：从画板标题上方绕行
+        const top = -HEADER_CLEARANCE - 8;
+        const laneY = top - 28 - above * 22;
+        above++;
+        const shift = ((above % 3) - 1) * 24;
+        const sx = Math.round(a.x + a.w / 2 + shift);
+        const tx = Math.round(b.x + b.w / 2 - shift);
+        pts = [[sx, top], [sx, laneY], [tx, laneY], [tx, top]];
+      }
+    } else pts = connect(a, b);
+    notes.push({
+      kind: e.arrow ? 'arrow' : 'line',
+      from: pts[0],
+      to: pts[pts.length - 1],
+      ...(pts.length > 2 ? { via: pts.slice(1, -1) } : {}),
+      ...(e.dashed ? { dash: 'dashed' as const } : {}),
+    });
+    if (e.label) {
+      // 标签放在中间那一段的中点上方
+      const mid = Math.floor((pts.length - 1) / 2);
+      const [p, q] = [pts[mid], pts[mid + 1]];
+      const vertical = p[0] === q[0];
+      const tw = textWidth(e.label, 160);
+      const mx = Math.round((p[0] + q[0]) / 2);
+      const my = Math.round((p[1] + q[1]) / 2);
+      notes.push({ kind: 'text', text: e.label, width: tw, at: vertical ? [mx + 8, my - 10] : [mx - Math.round(tw / 2), my - 26] });
+    }
+  }
+  return { notes, frames: [...new Set(frameOf.values())], boxes: placed.length };
 }
 
 const MAX_AI_NOTES = 300;
@@ -69,7 +185,7 @@ function lineCount(text: string, width: number, font: number) {
 const aiId = () => newId('a');
 
 /** 应用 AI 批注的增删改，返回结果摘要。只能修改 / 删除 AI 自己写的批注。 */
-export function applyAnnotations(c: Canvas, args: AnnotateArgs) {
+export function applyAnnotations(c: Canvas, args: AnnotateArgs, frameHeights: Map<string, number> = new Map()) {
   const doc = c.doc;
   const ensureFrame = (id: string | undefined, what: string) => {
     if (id === undefined) return undefined;
@@ -106,8 +222,13 @@ export function applyAnnotations(c: Canvas, args: AnnotateArgs) {
   }
 
   const written: Array<{ id: string; kind: string; frame?: string; box_xywh?: number[]; updated?: boolean; warnings?: string[] }> = [];
-  for (const [i, a] of (args.add ?? []).entries()) {
-    const where = `add[${i}]`;
+  const flow = args.flow ? flowToNotes(c, args.flow, frameHeights) : undefined;
+  const adds = [...(args.add ?? []), ...(flow?.notes ?? [])];
+  const nAdd = args.add?.length ?? 0;
+  if (flow && c.notes.filter((x) => x.by === 'ai').length + flow.notes.length > MAX_AI_NOTES)
+    throw new CanvasError(`AI 批注过多（流程图要新增 ${flow.notes.length} 条，上限 ${MAX_AI_NOTES}），先用 remove / clear 清理旧的`);
+  for (const [i, a] of adds.entries()) {
+    const where = i < nAdd ? `add[${i}]` : 'flow';
     const ox = ensureFrame(a.frame, where) ?? 0;
     const local = (p: PointInput | undefined, name: string): [number, number] => {
       if (!p) throw new CanvasError(`${where}：${a.kind} 需要 ${name}`, 'bad_args');
@@ -149,7 +270,7 @@ export function applyAnnotations(c: Canvas, args: AnnotateArgs) {
         }
       }
       pts = kind === 'rect' ? [[x, y], [x + w, y + h]] : [[x, y]];
-    } else pts = [local(a.from, 'from'), local(a.to, 'to')];
+    } else pts = [local(a.from, 'from'), ...(a.via ?? []).map((p, j) => local(p, `via[${j}]`)), local(a.to, 'to')];
     if (a.node) {
       try {
         resolveAddress(doc, a.node);
@@ -187,6 +308,7 @@ export function applyAnnotations(c: Canvas, args: AnnotateArgs) {
     written,
     ...(removed.length ? { removed } : {}),
     ...(resolved.length ? { resolved_comments: resolved } : {}),
+    ...(flow ? { flow: { boxes: flow.boxes, linked_frames: flow.frames, ids: written.slice(nAdd).map((w) => w.id) } } : {}),
     ai_annotations: c.notes.filter((n) => n.by === 'ai').length,
     frame_layout: layout,
     hint: `画板在画布上从左到右横排，顶端都在 y=0，相邻画板间距 ${FRAME_GAP}px。画板正上方 ${HEADER_CLEARANCE}px 是画板标题与工具栏，说明框底边要在 y=-${HEADER_CLEARANCE} 以上（服务端会自动上移；画板上方的说明框内容变多时向上长），或放在画板下方（y 大于画板高度；auto 高度的画板变高后，画布会把正下方的说明整体下移让出画板）。画板之间的文字会在相邻画板前自动换行，说明框不要宽过画板间空白。`,

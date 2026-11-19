@@ -437,6 +437,8 @@ export interface ProbeRequest {
   target?: string;
   scale: number;
   maxImages: number;
+  /** 时间预算（毫秒）：超过后不再截图，到点停止并只返回已检查的状态，避免服务端超时后浏览器仍在后台空跑。 */
+  budgetMs?: number;
 }
 
 export interface ProbeResult {

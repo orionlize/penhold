@@ -58,8 +58,16 @@ scripts/         开发辅助：import-presets.ts 生成内置预设目录，bui
 - **题材母题**：`design_direction({pick, concept, motif})` 的 `motif` 记录从题材里取的具体的物或形状，与方向卡片的记忆点（构图手法）一起记到画布。
 - **设计体检**：`design_screenshot` 截整个画板时，在渲染检查之外附一段设计提醒（`src/core/designLint.ts`）：阶梯外的字号 / 间距 / 圆角、字号档数过多、字重或字体族过多、没有视觉焦点、粗体过多、胶囊过多、卡片嵌套、左侧粗色条卡片、三个以上主色实心按钮、同图重复、emoji 图标、模板化元信息、直接写色值。提醒不阻塞自检；位图被放大超过 1.3 倍（`low_res_image`）、文字对比度不足（`low_contrast`：按实际底色计算，正文 4.5:1、大字 3:1，禁用控件除外）、移动端画板上可点击元素小于 44×44（`small_target`）则算作需要修复的问题。
 
+- **体检自动修复**：`design_lint_fix`（[src/core/lintFix.ts](../src/core/lintFix.ts)）只做机械替换，判定条件与体检一致：`off_scale` 文字字号 → 最接近的 `size.*`（比最大一档还大的展示字号不动）、`off_space` padding / margin / gap / rowGap → 最接近的 `space.*`（阶梯少于 4 档时不改）、`off_radius` 圆角 → 最接近的 `radius.*`（四角不同的造型圆角、≥99 的胶囊不动）、`raw_colors` 与某个 `color.*` 取值完全相同的纯色 → 该令牌（同值令牌有多个时按字段用途匹配名字：文字找 text / on- / fg，底色找 bg / surface / card，描边找 border / divider，仍分不出就跳过）。与最近一档相差超过 30%（且超过 4px）的值不改，列在 `skipped` 里由 AI 判断是否新增一档。组件实例只改组件定义一次。`dry_run:true` 只返回改动清单；正式修改走普通写入流程（持锁、进撤销栈、画板重新待自检）。截图报告里出现这四类提醒时会提示可以用它。
+- **截图像素对比**：画布对象在内存中记下每个截图目标最近一次的 PNG（最多 40 个目标，守护进程重启后清空）。`design_screenshot` 再次截同一目标、比例相同且期间有改动落在该画板时，在服务端解码两张 PNG（[src/server/pixelDiff.ts](../src/server/pixelDiff.ts)，只支持画布导出的 8 位 RGB / RGBA 无隔行格式，其余跳过），任一通道差超过 24 的像素按 8px 格子聚合、相隔两格以内的并成一块，报告最多 6 个变化区域（换算为设计 px）与变化占比；画面完全没变时提醒修改没有生效。查看指定状态（clicks / vars）的截图不参与对比。
+- **用户回退 AI 上一轮**：用户点“回退 AI 上一轮”后，画布记下一条一次性提醒，AI 下一次写入或调用 `canvas_status` 时以 `user_reverted_ai_round` 返回，提示不要原样重做、先了解现状。
+
 - **服务端框架**：用 Node 内置 `http` + `ws`，未引入 Hono/Fastify（MCP SDK 的 Streamable HTTP 传输直接基于 Node 请求对象）。
 - **令牌绑定写法**：面板与 AI 都写 `{color.primary}`，渲染与导出时转为 `var(--color-primary)`；也接受直接写 `var(--x)`。
+- **JSX 写法**（[src/core/jsx.ts](../src/core/jsx.ts)）：`node_insert` 的 `jsx` 与 `nodes` 二选一，`node_replace` 的 `jsx` 与 `node` 二选一，`design_read({format:"jsx"})` 以 JSX 返回节点与组件定义。它只是 Node JSON 的另一种拼写，解析后照常经 `validateNodeInput` 完整校验：
+  - 标签名即 `type`（不是合法标签名的 type 写成 `<_ type="…">`）；`id` `name` `component` `render` `text` 照写，`hidden` 即 `meta.hidden`；layout / box / style 的字段、`hover` / `focus` / `active` 与 proto 的字段可以直接写成属性，其余标量属性归入 props，也可以整块写 `layout={{…}}`。同一字段扁平写与整块写重复时报错。
+  - 属性值是 `"字符串"` 或 `{宽松 JSON}`（键可不加引号、可用单引号与尾逗号），不执行任何代码；元素内文字原样作为 `text`（`{{表达式}}` 不当成 JSX 表达式，多行逐行去首尾空白，`&lt;` `&amp;` 等实体会解码），文字与子元素不能混写；支持 `{/* */}` 与 `<!-- -->` 注释。
+  - 读出的 `stub` 存根与 `locked` 不能写回；`node_replace` 里带 `keepChildren`（须写 id）的元素沿用被替换子树里该节点原有的子节点，只改它自身的字段。`toJsx` 的输出与 `parseJsx` 往返一致（`test/jsx.test.ts`）。
 - **同组件名给出完整子树**：若与定义同结构、同样式，仅文本 / props / 显隐不同，差异自动转为实例 `overrides`；结构或样式不同仍拒绝（AI 一次插入多个同名表单项时无需预先知道内部 id）。
 - **实例的摆放属性**：`grow`、`alignSelf`、定位等“在父容器中的摆放”留在实例上，可逐实例不同；其余布局、盒模型与样式属于组件定义。
 - **实例内部地址**：画布与工具中用 `实例id:内部id` 指向实例内的节点；改其文本 / 图片写入该实例的 overrides，改盒模型 / 样式写入组件定义。
@@ -79,20 +87,25 @@ scripts/         开发辅助：import-presets.ts 生成内置预设目录，bui
   - 节点的 `proto` 字段描述页面内交互逻辑（AI 通过 MCP 写入，服务说明里有完整语法与 tab、短信倒计时示例）：画板级状态变量 `vars`；绑定 `show`（显隐）、`disabled`（禁用）、`styles`（条件样式）、文本 `{{表达式}}` 插值、输入框 `bind`；动作 `onClick` / `onLoad`：`set`、`toggle`、`countdown`、`stop`、`delay`、`if`、`navigate`、`back`、`open`。表达式是无副作用的 JS 子集（`src/core/proto.ts`），写入时校验语法。
   - 简单跳转也可写 `props.href`：`#<画板id>`、`#back`、`http(s):`；属性面板“交互”分组可设置跳转，并只读展示节点的交互逻辑。
   - 画布、截图与导出按初始状态静态渲染（初始隐藏的元素导出时不输出）；进入画板时状态重置为初值。
-  - **交互状态检查**：`design_screenshot` 对带交互的画板，除初始状态外还会自动探索点击、输入、计时后能到达的状态，并逐个检查（`src/core/states.ts` 不依赖 DOM 模拟动作，最多 4 步、24 个状态，按状态变量去重；输入框按表达式里 `len(x) == N` 之类的比较取 N 位样例）。
+  - **交互状态检查**：`design_screenshot` 对带交互的画板，除初始状态外还会自动探索点击、输入、计时后能到达的状态，并逐个检查（`src/core/states.ts` 不依赖 DOM 模拟动作，最多 4 步、24 个状态，按状态变量去重；输入框按表达式里 `len(x) > 20` 之类的比较在边界两侧各取一个长度（21 与 20），同时到达报错态与合法可提交的状态，每个变量最多 3 个长度）。
     - 每个状态在页面外的隐藏 iframe 中按该状态的 vars 渲染，跑与截图自检相同的检查。用户看到的画布不受影响。
     - 额外检查 `state_shift`：点击后，被点控件或其同级的位置、尺寸发生变化，例如选中态加粗导致 tab 跳动。
     - 报告只列初始状态里没有的问题，同一问题只在首次出现的状态下列出，没有新问题的状态合并成一行。
     - 只有出现新问题的状态才附截图（最多 4 张），并且只截变化区域。`states:"images"` 时每个状态都附图（最多 8 张）。
+    - 检查有 45 秒预算（低于服务端 60 秒超时）：用掉六成预算后不再截图，到点停止并返回已检查的状态，报告列出没来得及检查的状态。这样服务端超时后浏览器不会在后台继续空跑，拖慢下一次调用。
+    - 截图时位图先按显示尺寸 × 倍率（最多 2 倍）缩小再内嵌，资源的 data URL 按地址缓存；原图直接转 base64 会让每张截图的 SVG 有好几 MB。
+    - 滚动容器（`overflow: scroll / auto`）内容超出可视范围不算 `out_of_parent`。单独截滚动区外的节点时，克隆里展开这些容器、按未滚动的位置取图。
     - 同时给出静态问题：永远不会成立的 `show` 或条件样式（`unreachable`），跳到不存在的画板（`dead_link`），引用未声明初值的变量（`undeclared_var`）。后两类在写工具的返回值 `proto_warnings` 中也会提示。
     - 带交互的画板必须做过状态检查才算自检完成；`states:"off"` 时不释放编辑锁。
     - `design_screenshot({frame_id, clicks:[…], vars:{…}})` 用来查看指定状态：`clicks` 按顺序模拟点击，`"wait"` 触发最早的延时或倒计时，`"load"` 执行 onLoad。这种调用不改文档，也不计为自检。
   - 缩放比例左侧的播放按钮（Shift+空格）从选中元素所在画板开始全屏预览：交互逻辑由运行时执行，hover / focus / active 生效，输入框可输入；Backspace 返回、Esc 退出，点空白处高亮可点击区域。
+    - 画板像设备屏幕一样以固定高度显示，内容超出时在屏幕内滚动（不显示滚动条），而不是被内容撑高：固定高度的画板用它自己的高度；auto 高度的画板按宽度推断（`src/core/render.ts` 的 `screenHeight`：宽 ≤480 为 844，≤1100 为宽的 4/3，更宽为宽的 10/16），画布上仍显示整页。`position: sticky` 的顶栏（`top:0`）与底栏（`bottom:0`）在滚动时固定在屏幕上。服务说明要求 AI 保持画板 auto 高度，用 sticky 固定导航栏与 tab 栏，不自己包滚动容器。
   - 导出：设计稿有交互时，HTML 内嵌一段交互脚本（直接嵌入 `src/core/protoEngine.ts` 中 `createProtoEngine` 的源码，与画布播放执行同一套逻辑），导出的页面可直接试用 tab、倒计时、显隐、跨画板跳转与返回；分文件导出时跨画板跳转到对应文件。导出对话框取消“保留交互”或 `design_export` 传 `interactive:false` 时只输出初始状态、无脚本。没有任何交互的设计稿导出仍不含脚本。
   - `createProtoEngine` 必须保持自包含（不引用模块作用域的值），否则嵌入导出页面后会失效；测试会独立求值导出页面中的引擎源码。
 - **业务流程与额外说明**：服务说明鼓励 AI 为多页面 / 有分支或业务规则的交互稿补充说明，两种方式可组合：
   - `design_annotate` 画布批注：AI 在画板外的空白区放说明框（`rect`，矩形承载多行文字，`note` 为别名，可设 `width` / `height` / 底色；高度按文字估算，内容多时自动撑高）、文字（`text`）、箭头与连线（`arrow` / `line`，可跨画板，`{frame, x, y}` 指定另一画板的点，可设颜色与 `dashed` 线型），写页面说明、业务规则、跳转走向与待确认问题。这些批注和用户的便签、文字一样列在图层面板中（所在画板下，矩形显示为 Rectangle 并带文字摘要，标签为 AI）。批注带 `by:"ai"`，画布上显示为蓝色带 “AI” 角标，不进入设计稿、导出与撤销栈，无需编辑锁和自检；AI 只能更新（传 `id`）、`remove`、`clear` 自己的批注，不能动用户的。
   - 不遮挡画板标题与工具栏：画板正上方 40px 留给画板名称与播放 / 导出按钮。伸进这一带的说明框或文字由服务端自动上移，并避开同一画板上已有的说明依次往上叠（返回 `warnings`）；画板上方的说明框内容变多时向上长；这两样在屏幕上不随缩放变化，缩小画布时画板上方的 AI 说明整体再上移。放进画板内部时返回遮挡警告。返回值 `frame_layout` 给出各画板的 x 与宽度（画板横排、顶端 y=0、间距 120），`box_xywh` 给出说明框位置。`canvas_status` 把它们单独列在 `ai_annotations`，与用户意见区分。
+  - Mermaid 流程图：`design_annotate({flow:{mermaid, at?, frame?, width?}})` 由服务端解析与排版（[src/core/mermaid.ts](../src/core/mermaid.ts)：flowchart / graph 的子集，方向 TD/LR/BT/RL，常见节点形状，`-->` `---` `-.->` `==>` 与 `|标签|` / `-- 标签 -->`，链式与 `&`；subgraph、classDef、style 等行忽略）。id 或文字等于画板 id / 名称的节点直接指向画板，不生成说明框；其余节点按分层布局（去回边、最长路径分层、两轮重心排序）排成说明框，缺省放在所有画板下方 160px（auto 高度的画板先向画布页面实测），`{判断}` 为浅黄底、`(起止)` 为浅绿底。连线：相邻画板画在画板间空白里的横向箭头（往返错开），不相邻的画板从标题上方绕行（折线箭头，`add` 里的 arrow / line 也可用 `via` 写折点），其余取两个矩形相对的边中点相连；标签是连线中段旁的文字批注。返回 `flow.ids`，重画前先 remove 或 clear。
   - 说明画板：要随导出交付时，额外画一个“业务流程与说明”画板（在 `design_plan` 中一起声明），包含主流程图（卡片用 `props.href` 链到各页面）、各页面说明、业务规则、交互状态清单与数据字段；它是普通画板，会进入导出，同样需要截图自检。
   - 说明内容都不放进 UI 画板。
 - **批注**：评论、便签、手绘与形状存在画布目录的 `annotations.json`，不进入设计稿、导出与撤销栈。
@@ -137,7 +150,7 @@ scripts/         开发辅助：import-presets.ts 生成内置预设目录，bui
   - `design_direction({pick, concept})` 返回完整方向（可直接传给 `tokens_set` 的颜色 / 字体 / 圆角 / 阴影令牌、风格效果要点、该方向下不要做的事），并记到画布 `session.json` 的 `direction`；之后 `canvas_open` 返回 `design_direction`。`design_direction()` 不带参数换一批。
   - 尚未选定方向就调用 `tokens_set` 时，返回值带 `direction_reminder`。
 - **页面类型规范片段**：`design_plan` 按页面名与区块名识别页面类型，把 [guides/pages/](../guides/pages/) 下对应的片段（登录、首页、看板、落地页、列表、详情、表单、个人中心、引导 / 结果页）随返回值的 `page_guides` 直接下发，内容是该类页面的几种构图方案与常见平庸写法。有本地设计规范时同样下发：品牌色与字体以本地规范为准，构图由片段补充。新增类型：在 `guides/pages/` 加 `<type>.md`，并在 [src/server/design/pageGuides.ts](../src/server/design/pageGuides.ts) 的 `TYPES` 中登记匹配规则。
-- **重新构建后自动升级守护进程**：守护进程在 `daemon.json` 中记录构建标识（编译产物的最新修改时间）；代理或 `penhold-mcp open` 发现守护进程来自更旧的构建时会平滑重启它（只升级不降级）。
+- **重新构建后自动升级守护进程**：守护进程在 `daemon.json` 中记录构建标识（编译产物的最新修改时间）；代理或 `penhold-mcp open` 发现守护进程来自更旧的构建时会平滑重启它（只升级不降级）。代理重连到另一个构建的守护进程后会向客户端发 `notifications/tools/list_changed`，客户端重新拉取工具列表，避免继续用会话开始时缓存的旧参数校验（新加的参数被拒）。
 - **画布无需令牌**：画布页面、管理 API 与画布 WebSocket 直接打开即可（`http://127.0.0.1:<port>/c/<canvasId>`），靠只监听 127.0.0.1 + 校验 Host 与 Origin 防护；只有 MCP 端点（`/mcp`）需要令牌，由 stdio 代理自动携带（`~/.penhold/token`，权限 600）。
 
 ## Tweaks（可调节项）
