@@ -58,8 +58,16 @@ scripts/         开发辅助：import-presets.ts 生成内置预设目录，bui
 - **题材母题**：`design_direction({pick, concept, motif})` 的 `motif` 记录从题材里取的具体的物或形状，与方向卡片的记忆点（构图手法）一起记到画布。
 - **设计体检**：`design_screenshot` 截整个画板时，在渲染检查之外附一段设计提醒（`src/core/designLint.ts`）：阶梯外的字号 / 间距 / 圆角、字号档数过多、字重或字体族过多、没有视觉焦点、粗体过多、胶囊过多、卡片嵌套、左侧粗色条卡片、三个以上主色实心按钮、同图重复、emoji 图标、模板化元信息、直接写色值。提醒不阻塞自检；位图被放大超过 1.3 倍（`low_res_image`）、文字对比度不足（`low_contrast`：按实际底色计算，正文 4.5:1、大字 3:1，禁用控件除外）、移动端画板上可点击元素小于 44×44（`small_target`）则算作需要修复的问题。
 
+- **体检自动修复**：`design_lint_fix`（[src/core/lintFix.ts](../src/core/lintFix.ts)）只做机械替换，判定条件与体检一致：`off_scale` 文字字号 → 最接近的 `size.*`（比最大一档还大的展示字号不动）、`off_space` padding / margin / gap / rowGap → 最接近的 `space.*`（阶梯少于 4 档时不改）、`off_radius` 圆角 → 最接近的 `radius.*`（四角不同的造型圆角、≥99 的胶囊不动）、`raw_colors` 与某个 `color.*` 取值完全相同的纯色 → 该令牌（同值令牌有多个时按字段用途匹配名字：文字找 text / on- / fg，底色找 bg / surface / card，描边找 border / divider，仍分不出就跳过）。与最近一档相差超过 30%（且超过 4px）的值不改，列在 `skipped` 里由 AI 判断是否新增一档。组件实例只改组件定义一次。`dry_run:true` 只返回改动清单；正式修改走普通写入流程（持锁、进撤销栈、画板重新待自检）。截图报告里出现这四类提醒时会提示可以用它。
+- **截图像素对比**：画布对象在内存中记下每个截图目标最近一次的 PNG（最多 40 个目标，守护进程重启后清空）。`design_screenshot` 再次截同一目标、比例相同且期间有改动落在该画板时，在服务端解码两张 PNG（[src/server/pixelDiff.ts](../src/server/pixelDiff.ts)，只支持画布导出的 8 位 RGB / RGBA 无隔行格式，其余跳过），任一通道差超过 24 的像素按 8px 格子聚合、相隔两格以内的并成一块，报告最多 6 个变化区域（换算为设计 px）与变化占比；画面完全没变时提醒修改没有生效。查看指定状态（clicks / vars）的截图不参与对比。
+- **用户回退 AI 上一轮**：用户点“回退 AI 上一轮”后，画布记下一条一次性提醒，AI 下一次写入或调用 `canvas_status` 时以 `user_reverted_ai_round` 返回，提示不要原样重做、先了解现状。
+
 - **服务端框架**：用 Node 内置 `http` + `ws`，未引入 Hono/Fastify（MCP SDK 的 Streamable HTTP 传输直接基于 Node 请求对象）。
 - **令牌绑定写法**：面板与 AI 都写 `{color.primary}`，渲染与导出时转为 `var(--color-primary)`；也接受直接写 `var(--x)`。
+- **JSX 写法**（[src/core/jsx.ts](../src/core/jsx.ts)）：`node_insert` 的 `jsx` 与 `nodes` 二选一，`node_replace` 的 `jsx` 与 `node` 二选一，`design_read({format:"jsx"})` 以 JSX 返回节点与组件定义。它只是 Node JSON 的另一种拼写，解析后照常经 `validateNodeInput` 完整校验：
+  - 标签名即 `type`（不是合法标签名的 type 写成 `<_ type="…">`）；`id` `name` `component` `render` `text` 照写，`hidden` 即 `meta.hidden`；layout / box / style 的字段、`hover` / `focus` / `active` 与 proto 的字段可以直接写成属性，其余标量属性归入 props，也可以整块写 `layout={{…}}`。同一字段扁平写与整块写重复时报错。
+  - 属性值是 `"字符串"` 或 `{宽松 JSON}`（键可不加引号、可用单引号与尾逗号），不执行任何代码；元素内文字原样作为 `text`（`{{表达式}}` 不当成 JSX 表达式，多行逐行去首尾空白，`&lt;` `&amp;` 等实体会解码），文字与子元素不能混写；支持 `{/* */}` 与 `<!-- -->` 注释。
+  - 读出的 `stub` 存根与 `locked` 不能写回；`node_replace` 里带 `keepChildren`（须写 id）的元素沿用被替换子树里该节点原有的子节点，只改它自身的字段。`toJsx` 的输出与 `parseJsx` 往返一致（`test/jsx.test.ts`）。
 - **同组件名给出完整子树**：若与定义同结构、同样式，仅文本 / props / 显隐不同，差异自动转为实例 `overrides`；结构或样式不同仍拒绝（AI 一次插入多个同名表单项时无需预先知道内部 id）。
 - **实例的摆放属性**：`grow`、`alignSelf`、定位等“在父容器中的摆放”留在实例上，可逐实例不同；其余布局、盒模型与样式属于组件定义。
 - **实例内部地址**：画布与工具中用 `实例id:内部id` 指向实例内的节点；改其文本 / 图片写入该实例的 overrides，改盒模型 / 样式写入组件定义。
@@ -93,6 +101,7 @@ scripts/         开发辅助：import-presets.ts 生成内置预设目录，bui
 - **业务流程与额外说明**：服务说明鼓励 AI 为多页面 / 有分支或业务规则的交互稿补充说明，两种方式可组合：
   - `design_annotate` 画布批注：AI 在画板外的空白区放说明框（`rect`，矩形承载多行文字，`note` 为别名，可设 `width` / `height` / 底色；高度按文字估算，内容多时自动撑高）、文字（`text`）、箭头与连线（`arrow` / `line`，可跨画板，`{frame, x, y}` 指定另一画板的点，可设颜色与 `dashed` 线型），写页面说明、业务规则、跳转走向与待确认问题。这些批注和用户的便签、文字一样列在图层面板中（所在画板下，矩形显示为 Rectangle 并带文字摘要，标签为 AI）。批注带 `by:"ai"`，画布上显示为蓝色带 “AI” 角标，不进入设计稿、导出与撤销栈，无需编辑锁和自检；AI 只能更新（传 `id`）、`remove`、`clear` 自己的批注，不能动用户的。
   - 不遮挡画板标题与工具栏：画板正上方 40px 留给画板名称与播放 / 导出按钮。伸进这一带的说明框或文字由服务端自动上移，并避开同一画板上已有的说明依次往上叠（返回 `warnings`）；画板上方的说明框内容变多时向上长；这两样在屏幕上不随缩放变化，缩小画布时画板上方的 AI 说明整体再上移。放进画板内部时返回遮挡警告。返回值 `frame_layout` 给出各画板的 x 与宽度（画板横排、顶端 y=0、间距 120），`box_xywh` 给出说明框位置。`canvas_status` 把它们单独列在 `ai_annotations`，与用户意见区分。
+  - Mermaid 流程图：`design_annotate({flow:{mermaid, at?, frame?, width?}})` 由服务端解析与排版（[src/core/mermaid.ts](../src/core/mermaid.ts)：flowchart / graph 的子集，方向 TD/LR/BT/RL，常见节点形状，`-->` `---` `-.->` `==>` 与 `|标签|` / `-- 标签 -->`，链式与 `&`；subgraph、classDef、style 等行忽略）。id 或文字等于画板 id / 名称的节点直接指向画板，不生成说明框；其余节点按分层布局（去回边、最长路径分层、两轮重心排序）排成说明框，缺省放在所有画板下方 160px（auto 高度的画板先向画布页面实测），`{判断}` 为浅黄底、`(起止)` 为浅绿底。连线：相邻画板画在画板间空白里的横向箭头（往返错开），不相邻的画板从标题上方绕行（折线箭头，`add` 里的 arrow / line 也可用 `via` 写折点），其余取两个矩形相对的边中点相连；标签是连线中段旁的文字批注。返回 `flow.ids`，重画前先 remove 或 clear。
   - 说明画板：要随导出交付时，额外画一个“业务流程与说明”画板（在 `design_plan` 中一起声明），包含主流程图（卡片用 `props.href` 链到各页面）、各页面说明、业务规则、交互状态清单与数据字段；它是普通画板，会进入导出，同样需要截图自检。
   - 说明内容都不放进 UI 画板。
 - **批注**：评论、便签、手绘与形状存在画布目录的 `annotations.json`，不进入设计稿、导出与撤销栈。

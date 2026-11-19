@@ -377,3 +377,20 @@ test('set_theme 把系统的主题颜色写进画布并可撤销', async () => {
   assert.equal(c.doc.tokens['color.bg'], '#ffffff');
   c.close();
 });
+
+test('revertAiRound: 记下一次性的回退提醒，截图记录按目标保留上一张', async () => {
+  const c = new Canvas('aaaa0001-2222-4333-8444-555555555555', { title: 'r', cwd: '/x' });
+  await c.acquireLock('s1');
+  c.commit('ai', [{ op: 'frame_create', index: 0, frame: { id: 'f1', name: 'F', width: 400, height: 'auto', root: { id: 'f1', type: 'page' } } }], { session: 's1' });
+  c.markChecked(['f1']);
+  assert.equal(c.takeRevertNotice(), null);
+  const tx = c.revertAiRound();
+  assert.equal(c.doc.frames.length, 0);
+  const n = c.takeRevertNotice();
+  assert.equal(n?.rev, tx.rev);
+  assert.equal(c.takeRevertNotice(), null, '只提醒一次');
+  assert.equal(c.rememberShot('f1', 'AAA', 1), undefined);
+  assert.equal(c.rememberShot('f1', 'BBB', 1)?.png, 'AAA');
+  assert.equal(c.rememberShot('f1', 'CCC', 0.5), undefined, '比例不同不对比');
+  c.close();
+});

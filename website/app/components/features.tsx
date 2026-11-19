@@ -7,7 +7,8 @@ const ITEMS = [
   { id: 'collab', title: '画布双向协作', desc: 'AI 改结构，你调样式，互不覆盖' },
   { id: 'proto', title: '能点的原型', desc: 'tab、倒计时、校验写进稿子里' },
   { id: 'system', title: '自带设计系统', desc: '亮暗主题、字阶、组件存在项目里' },
-  { id: 'check', title: '画完先自检', desc: '截图、查问题、自己修' },
+  { id: 'check', title: '画完先自检', desc: '截图、比对、查问题、自己修' },
+  { id: 'flow', title: '流程图自动成图', desc: '几行 Mermaid，画板间箭头排好' },
   { id: 'export', title: '导出就能用', desc: '单文件 HTML + tokens.css' },
 ] as const;
 
@@ -28,7 +29,11 @@ const COPY: Record<FeatId, { title: string; body: string }> = {
   },
   check: {
     title: '交到你手里前，先照过镜子',
-    body: '每轮结束 AI 都要截图自检：溢出、对比度、触控尺寸、点击后的状态都查一遍，有问题自己修。',
+    body: '每轮结束 AI 都要截图自检：溢出、对比度、触控尺寸、点击后的状态都查一遍；再截图时和上一张逐像素比对，改到别处或改了没生效都会被指出。阶梯外的字号、间距、圆角一键换成令牌。',
+  },
+  flow: {
+    title: '业务流程，写几行就成图',
+    body: 'AI 用 Mermaid 写出跳转与分支，服务端排好位置：画板之间直接连箭头，不相邻的从上方绕过去，判断与异常路径单独标出。说明只画在画布上，不进导出。',
   },
   export: {
     title: '导出的是文件，不是链接',
@@ -193,7 +198,42 @@ function Visual({ id }: { id: FeatId }) {
             </span>
             <span className="mono-xs accent">✓ 无溢出、重叠、截断</span>
             <span className="mono-xs accent">✓ 24 个交互状态已探索</span>
+            <span className="mono-xs accent">✓ 像素对比：只有按钮区域变化</span>
+            <span className="mono-xs muted">design_lint_fix · 3 处字号对齐令牌</span>
           </div>
+        </div>
+      );
+    case 'flow':
+      return (
+        <div className="v-flow">
+          <span className="v-flow-code">
+            <span className="mono-xs muted">flowchart LR</span>
+            <span className="mono-xs accent">  登录 --&gt;|成功| 首页</span>
+            <span className="mono-xs accent">  首页 --&gt; 支付</span>
+            <span className="mono-xs secondary">  支付 -.-&gt;|失败| 登录</span>
+          </span>
+          <span className="v-flow-board">
+            <span className="v-flow-back">
+              <i />
+              <span className="mono-xs muted">失败</span>
+            </span>
+            {['登录', '首页', '支付'].map((name, i) => (
+              <span key={name} className="v-flow-step">
+                {i > 0 && (
+                  <span className="v-flow-arrow">
+                    {i === 1 && <span className="mono-xs muted">成功</span>}
+                    <i />
+                  </span>
+                )}
+                <span className="v-flow-frame">
+                  <span className="mono-xs muted">{name}</span>
+                  <i className="title" />
+                  <i />
+                  <i className="btn" />
+                </span>
+              </span>
+            ))}
+          </span>
         </div>
       );
     case 'export':

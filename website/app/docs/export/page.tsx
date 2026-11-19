@@ -57,13 +57,16 @@ export default function Export() {
           <code>design_screenshot</code> 截图作为视觉基准。
         </li>
         <li>
-          按组件逐个 <code>design_read</code>，拿到精确的布局、样式、令牌引用和交互逻辑。
+          按组件逐个 <code>design_read</code>，拿到精确的布局、样式、令牌引用和交互逻辑。传 <code>format:"jsx"</code> 时以 JSX 返回，结构一眼看清，也更省上下文。
         </li>
       </ol>
       <Code lang="提示词" copy={false}>{`把画布上的设置页实现成 src/pages/Settings.tsx，用项目现有的 Tailwind 配置，
 交互逻辑照稿子里的实现。`}</Code>
       <p>
         之后你在画布上再做调整，让 AI 用 <code>design_changes</code> 只同步变化的部分，不必整页重写。
+      </p>
+      <p>
+        反过来改稿也走同一条路：AI 把某个区块读成 JSX，改写后用 <code>node_replace</code> 整块写回。没展开的子节点标成 <code>keepChildren</code> 原样保留，节点 id 不变，你在上面的评论和手动改动记录都还在。
       </p>
     </>
   );
