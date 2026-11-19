@@ -122,6 +122,7 @@ export async function runProxy() {
     } catch (e) {
       if (!retry) throw e;
       // 守护进程可能已重启：重新拉起并重放初始化握手
+      const prevBuild = info.build;
       info = await ensureDaemon();
       await connect();
       if (initMsg && m !== initMsg) {
@@ -130,6 +131,9 @@ export async function runProxy() {
         if (initializedMsg) await http!.send(initializedMsg);
       }
       await forward(m, false);
+      // 换成了另一个构建的守护进程（重新构建或其他检出升级了它）：工具与参数可能变了，通知客户端重新拉取工具列表，
+      // 否则客户端会继续用会话开始时缓存的旧参数校验（例如新加的参数被拒）
+      if (initMsg && info.build !== prevBuild) stdio.send({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' }).catch(() => {});
     }
   };
 

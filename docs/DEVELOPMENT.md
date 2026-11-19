@@ -87,11 +87,14 @@ scripts/         开发辅助：import-presets.ts 生成内置预设目录，bui
   - 节点的 `proto` 字段描述页面内交互逻辑（AI 通过 MCP 写入，服务说明里有完整语法与 tab、短信倒计时示例）：画板级状态变量 `vars`；绑定 `show`（显隐）、`disabled`（禁用）、`styles`（条件样式）、文本 `{{表达式}}` 插值、输入框 `bind`；动作 `onClick` / `onLoad`：`set`、`toggle`、`countdown`、`stop`、`delay`、`if`、`navigate`、`back`、`open`。表达式是无副作用的 JS 子集（`src/core/proto.ts`），写入时校验语法。
   - 简单跳转也可写 `props.href`：`#<画板id>`、`#back`、`http(s):`；属性面板“交互”分组可设置跳转，并只读展示节点的交互逻辑。
   - 画布、截图与导出按初始状态静态渲染（初始隐藏的元素导出时不输出）；进入画板时状态重置为初值。
-  - **交互状态检查**：`design_screenshot` 对带交互的画板，除初始状态外还会自动探索点击、输入、计时后能到达的状态，并逐个检查（`src/core/states.ts` 不依赖 DOM 模拟动作，最多 4 步、24 个状态，按状态变量去重；输入框按表达式里 `len(x) == N` 之类的比较取 N 位样例）。
+  - **交互状态检查**：`design_screenshot` 对带交互的画板，除初始状态外还会自动探索点击、输入、计时后能到达的状态，并逐个检查（`src/core/states.ts` 不依赖 DOM 模拟动作，最多 4 步、24 个状态，按状态变量去重；输入框按表达式里 `len(x) > 20` 之类的比较在边界两侧各取一个长度（21 与 20），同时到达报错态与合法可提交的状态，每个变量最多 3 个长度）。
     - 每个状态在页面外的隐藏 iframe 中按该状态的 vars 渲染，跑与截图自检相同的检查。用户看到的画布不受影响。
     - 额外检查 `state_shift`：点击后，被点控件或其同级的位置、尺寸发生变化，例如选中态加粗导致 tab 跳动。
     - 报告只列初始状态里没有的问题，同一问题只在首次出现的状态下列出，没有新问题的状态合并成一行。
     - 只有出现新问题的状态才附截图（最多 4 张），并且只截变化区域。`states:"images"` 时每个状态都附图（最多 8 张）。
+    - 检查有 45 秒预算（低于服务端 60 秒超时）：用掉六成预算后不再截图，到点停止并返回已检查的状态，报告列出没来得及检查的状态。这样服务端超时后浏览器不会在后台继续空跑，拖慢下一次调用。
+    - 截图时位图先按显示尺寸 × 倍率（最多 2 倍）缩小再内嵌，资源的 data URL 按地址缓存；原图直接转 base64 会让每张截图的 SVG 有好几 MB。
+    - 滚动容器（`overflow: scroll / auto`）内容超出可视范围不算 `out_of_parent`。单独截滚动区外的节点时，克隆里展开这些容器、按未滚动的位置取图。
     - 同时给出静态问题：永远不会成立的 `show` 或条件样式（`unreachable`），跳到不存在的画板（`dead_link`），引用未声明初值的变量（`undeclared_var`）。后两类在写工具的返回值 `proto_warnings` 中也会提示。
     - 带交互的画板必须做过状态检查才算自检完成；`states:"off"` 时不释放编辑锁。
     - `design_screenshot({frame_id, clicks:[…], vars:{…}})` 用来查看指定状态：`clicks` 按顺序模拟点击，`"wait"` 触发最早的延时或倒计时，`"load"` 执行 onLoad。这种调用不改文档，也不计为自检。
@@ -146,7 +149,7 @@ scripts/         开发辅助：import-presets.ts 生成内置预设目录，bui
   - `design_direction({pick, concept})` 返回完整方向（可直接传给 `tokens_set` 的颜色 / 字体 / 圆角 / 阴影令牌、风格效果要点、该方向下不要做的事），并记到画布 `session.json` 的 `direction`；之后 `canvas_open` 返回 `design_direction`。`design_direction()` 不带参数换一批。
   - 尚未选定方向就调用 `tokens_set` 时，返回值带 `direction_reminder`。
 - **页面类型规范片段**：`design_plan` 按页面名与区块名识别页面类型，把 [guides/pages/](../guides/pages/) 下对应的片段（登录、首页、看板、落地页、列表、详情、表单、个人中心、引导 / 结果页）随返回值的 `page_guides` 直接下发，内容是该类页面的几种构图方案与常见平庸写法。有本地设计规范时同样下发：品牌色与字体以本地规范为准，构图由片段补充。新增类型：在 `guides/pages/` 加 `<type>.md`，并在 [src/server/design/pageGuides.ts](../src/server/design/pageGuides.ts) 的 `TYPES` 中登记匹配规则。
-- **重新构建后自动升级守护进程**：守护进程在 `daemon.json` 中记录构建标识（编译产物的最新修改时间）；代理或 `penhold-mcp open` 发现守护进程来自更旧的构建时会平滑重启它（只升级不降级）。
+- **重新构建后自动升级守护进程**：守护进程在 `daemon.json` 中记录构建标识（编译产物的最新修改时间）；代理或 `penhold-mcp open` 发现守护进程来自更旧的构建时会平滑重启它（只升级不降级）。代理重连到另一个构建的守护进程后会向客户端发 `notifications/tools/list_changed`，客户端重新拉取工具列表，避免继续用会话开始时缓存的旧参数校验（新加的参数被拒）。
 - **画布无需令牌**：画布页面、管理 API 与画布 WebSocket 直接打开即可（`http://127.0.0.1:<port>/c/<canvasId>`），靠只监听 127.0.0.1 + 校验 Host 与 Origin 防护；只有 MCP 端点（`/mcp`）需要令牌，由 stdio 代理自动携带（`~/.penhold/token`，权限 600）。
 
 ## Tweaks（可调节项）

@@ -183,6 +183,9 @@ function shotDiffText(c: Canvas, target: string, frameId: string | undefined, pr
  * seen(key) 返回这段内容本会话里是否已原样给过（并记下）：重复截图同一画板时，
  * 没有新问题的状态列表与离开本页的跳转列表通常不变，只给简短版。
  */
+/** 交互状态检查的时间预算：低于 canvas.probe 的 60 秒超时，留出截图与回传的余量。 */
+const PROBE_BUDGET_MS = 45_000;
+
 function formatStates(ex: Exploration, results: ProbeResult[], warnings: ProtoWarning[], seen: (key: string) => boolean = () => false): { text: string; images: Array<{ label: string; png: string }> } {
   const lines: string[] = [];
   const images: Array<{ label: string; png: string }> = [];
@@ -216,6 +219,11 @@ function formatStates(ex: Exploration, results: ProbeResult[], warnings: ProtoWa
       if (fresh.length > 12) lines.push(`  - …另有 ${fresh.length - 12} 个`);
       if (r.png) images.push({ label: `${name} ${pathText(st.path)}${r.region ? `（变化区域 x${r.region.x} y${r.region.y} ${r.region.width}×${r.region.height}）` : ''}`, png: r.png });
     }
+    const missed = others.filter((st) => !results[st.index]);
+    if (missed.length)
+      lines.push(
+        `- ${missed.map((st) => `S${st.index}`).slice(0, 12).join('、')}${missed.length > 12 ? ' …' : ''} 共 ${missed.length} 个状态在检查时限（${PROBE_BUDGET_MS / 1000} 秒）内没来得及检查：用 design_screenshot 的 clicks / vars 单独查看，或减少画板上互相独立的开关（状态数按乘积增长）`,
+      );
     if (quiet.length) {
       const list = `${quiet.slice(0, 16).join('、')}${quiet.length > 16 ? ' …' : ''}`;
       lines.push(seen(`quiet:${list}`) ? `- 其余 ${quiet.length} 个状态没有新问题（同上次）` : `- 其余 ${quiet.length} 个状态没有新问题：${list}`);
@@ -2027,6 +2035,7 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
                       dedupe: true,
                       scale,
                       maxImages: args.states === 'images' ? 8 : 4,
+                      budgetMs: PROBE_BUDGET_MS,
                     })
                   : [];
               const f = formatStates(ex, results, warnings, (key) => seenBefore(ctx, `${frame.id}|${key}`));

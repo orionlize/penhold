@@ -218,12 +218,24 @@ function inputSamples(nodes: FlatNode[]): Map<string, string[]> {
     if (!out.has(v)) out.set(v, new Set());
     out.get(v)!.add(n);
   };
+  // 比较的两侧各取一个长度：len(title) > 20 既要试 21（报错态），也要试 20（合法、可提交）
+  const both = (v: string, op: string, n: number) => {
+    if (op === '>' || op === '<=') (add(v, n + 1), add(v, n));
+    else if (op === '<' || op === '>=') (add(v, n), add(v, n - 1));
+    else (add(v, n), add(v, n + 1));
+  };
+  const flip: Record<string, string> = { '<': '>', '>': '<', '<=': '>=', '>=': '<=', '==': '==', '!=': '!=' };
   for (const e of exprs) {
-    for (const m of e.matchAll(/len\(\s*([a-zA-Z_]\w*)\s*\)\s*(==|!=|>=|<=|>|<)\s*(\d+)/g)) add(m[1], Number(m[3]) + (m[2] === '>' ? 1 : 0));
-    for (const m of e.matchAll(/(\d+)\s*(==|!=|>=|<=|>|<)\s*len\(\s*([a-zA-Z_]\w*)\s*\)/g)) add(m[3], Number(m[1]) + (m[2] === '<' ? 1 : 0));
+    for (const m of e.matchAll(/len\(\s*([a-zA-Z_]\w*)\s*\)\s*(==|!=|>=|<=|>|<)\s*(\d+)/g)) both(m[1], m[2], Number(m[3]));
+    for (const m of e.matchAll(/(\d+)\s*(==|!=|>=|<=|>|<)\s*len\(\s*([a-zA-Z_]\w*)\s*\)/g)) both(m[3], flip[m[2]], Number(m[1]));
   }
   const res = new Map<string, string[]>();
-  for (const [v, lens] of out) res.set(v, [...lens].slice(0, 2).map((n) => '1'.repeat(n)));
+  for (const [v, lens] of out) {
+    // 最多 3 个长度（控制状态数）：太多时取最短、居中与最长
+    const l = [...lens].sort((a, b) => a - b);
+    const pick = l.length <= 3 ? l : [l[0], l[Math.floor(l.length / 2)], l[l.length - 1]];
+    res.set(v, pick.map((n) => '1'.repeat(n)));
+  }
   return res;
 }
 
