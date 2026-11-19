@@ -20,8 +20,8 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    // data-t / data-h / data-r 由 <Ticker> 在客户端轮换，驱动全站的循环动效
-    <html lang="zh-CN" data-t="1" data-h="0" data-r="0" suppressHydrationWarning>
+    // data-t / data-h / data-c 由 <Ticker> 在客户端轮换，驱动全站的循环动效
+    <html lang="zh-CN" data-t="1" data-h="0" data-c="0" suppressHydrationWarning>
       <body>
         <Ticker />
         {children}
