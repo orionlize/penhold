@@ -97,7 +97,7 @@ export function Demo() {
   const calls = [
     { name: 'canvas_open', arg: '(new: true)', out: '画布已在浏览器打开 · 127.0.0.1:4470', at: 14 },
     { name: 'design_plan', arg: d.plan, out: '已建 1 个画板，画布显示骨架屏', at: 12 },
-    { name: 'design_system', arg: '(action: create)', out: '亮 / 暗两套主题 · 10 种文字样式 · 对比度已修正', at: 11 },
+    { name: 'design_system', arg: '(action: create)', out: '主题 + 2 种备选风格 · 10 种文字样式 · 对比度已修正', at: 11 },
     { name: 'node_insert', arg: d.insertA, out: '插入 18 个节点 · 画布逐个回放', at: 9 },
     { name: 'node_insert', arg: d.insertB, out: '插入 26 个节点 · 可在画布里点播放试用', at: 7 },
     { name: 'design_screenshot', arg: '(自检)', out: '0 溢出 · 0 低对比度 · 交互状态全部通过', at: 5 },

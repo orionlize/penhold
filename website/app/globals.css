@@ -2230,7 +2230,7 @@ code {
   position: relative;
   flex: 1 1 0;
   min-width: 0;
-  height: 480px;
+  min-height: 480px;
   overflow: hidden;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
@@ -2739,7 +2739,63 @@ code {
   opacity: 0.35;
 }
 
-/* 预览 06：导出文件 */
+/* 预览 06：按迭代分画布 */
+.v-rounds {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+
+.v-round {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+}
+
+.v-round.old {
+  opacity: 0.55;
+}
+
+.v-round.new {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 24px var(--color-glow-primary);
+}
+
+.v-round-frames {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.v-flow-arrow.dashed i {
+  border-top-style: dashed;
+}
+
+.v-ref {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border: 1.5px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-card);
+  transition: border-color 0.6s ease;
+}
+
+.v-ref b {
+  font-weight: 500;
+}
+
+:root[data-t='0'] .v-ref {
+  border-color: var(--color-ai);
+}
+
+/* 预览 07：导出文件 */
 .v-export {
   display: flex;
   justify-content: center;

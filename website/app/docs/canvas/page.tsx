@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { docMeta } from '../nav';
 import { DocHead, H2, Note, Table } from '../ui';
 
@@ -14,7 +15,7 @@ export default function Canvas() {
 
       <H2 id="home">画布首页</H2>
       <p>
-        运行 <code>npx penhold-mcp open</code> 打开首页，可以看到本机所有画布与设计系统。<code>npx penhold-mcp open &lt;画布 id&gt;</code> 直接打开某个画布。
+        运行 <code>npx penhold-mcp open</code> 打开首页，可以看到本机所有画布与设计系统。画布按项目（工作目录）分组，最近更新的项目在前，组内按创建时间列成“第 N 轮”，见<Link href="/docs/workflow#rounds">新一轮迭代</Link>。<code>npx penhold-mcp open &lt;画布 id&gt;</code> 直接打开某个画布。
       </p>
 
       <H2 id="edit">你能改什么</H2>
@@ -26,7 +27,7 @@ export default function Canvas() {
           ['文字', '单击文字元素直接进入编辑：回车提交，Shift+回车换行，Esc 取消。'],
           ['新增文字与画板', '用文字工具在画板里点一下插入文字节点；用画板工具新建空画板（移动 390 / 平板 768 / 桌面 1440）。'],
           ['跳转', '属性面板“交互”分组可以设置点击跳到哪个画板。'],
-          ['Tweaks', '不选中任何节点时，右侧显示 AI 暴露出来的可调项（取色、滑块、下拉、开关）。'],
+          ['Tweaks', '不选中任何节点时，右侧显示 AI 暴露出来的可调项（取色、滑块、下拉、开关）；设计系统有多个主题时还能切换风格、配色与明暗。没在问卷里选风格时，几种备选风格会出现在这里。'],
         ]}
       />
       <p>
@@ -40,7 +41,7 @@ export default function Canvas() {
       <Table
         head={['工具', '快捷键', '用途']}
         rows={[
-          ['选择', <kbd key="k">V</kbd>, '点选元素；Shift+单击多选'],
+          ['选择', <kbd key="k">V</kbd>, '点选元素；Shift+单击多选。在图层树里单击节点或画板，画布会平移过去，放不下时自动缩小'],
           ['拖拽', <kbd key="k">H</kbd>, '移动画布，也可以按住空格'],
           ['文字', <kbd key="k">T</kbd>, '画板内插入文字节点，画板外添加批注文字'],
           ['画板', <kbd key="k">A</kbd>, '新建空画板'],

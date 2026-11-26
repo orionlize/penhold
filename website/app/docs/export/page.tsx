@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { docMeta } from '../nav';
 import { Code, DocHead, H2, Note, Table } from '../ui';
 
@@ -38,12 +39,16 @@ export default function Export() {
       <Note>
         <p>导出的 HTML 不内嵌字体文件。导出结果会列出用到的字体，在别的电脑上打开前请确认已安装，或换成网络字体。</p>
         <p>没有任何交互的稿子导出时不含脚本。</p>
+        <p>导出画板链接到其他画布的页面时，那些页面会作为只读页面一起打包（tab 显示为斜体），只打包直接链接到的一层。找不到的目标会列在导出结果的警告里。</p>
       </Note>
 
       <H2 id="tweaks">Tweaks 面板</H2>
       <p>
         让 AI 把关键令牌暴露成可调项（如“主色”“圆角”“紧凑模式”），画布右侧不选中元素时显示 Tweaks 面板。导出的 HTML 带同样的浮动面板，改的是{' '}
         <code>:root</code> 上的 CSS 变量，适合给评审的人自己试配色和密度。关闭“保留交互”的导出不带面板。
+      </p>
+      <p>
+        设计系统有多个主题时，画布上的 Tweaks 面板顶部还能按风格、配色、明暗切换主题，详见<Link href="/docs/design-system#themes">设计系统 · 主题</Link>。
       </p>
       <Code lang="提示词" copy={false}>{`加几个 Tweaks：主色、圆角大小、亮暗切换。`}</Code>
 

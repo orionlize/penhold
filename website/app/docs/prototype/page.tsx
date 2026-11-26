@@ -47,6 +47,16 @@ export default function Prototype() {
         简单跳转也可以直接在属性面板“交互”分组里设置，等价于 <code>props.href</code>：<code>#&lt;画板 id&gt;</code> 跳到另一页，
         <code>#back</code> 返回，<code>https://…</code> 打开外链。
       </p>
+
+      <H2 id="navigate">跳到其他画布的页面</H2>
+      <p>
+        按迭代分画布后，新页面可以直接跳到同一项目里旧画布上的页面：<code>props.href</code> 写 <code>#&lt;画布 id&gt;/&lt;画板 id&gt;</code>，
+        <code>proto</code> 写 <code>{'{do:"navigate", canvas, frame}'}</code>。目标画布或画板不存在时，AI 写入时就会收到提醒。
+      </p>
+      <ul>
+        <li>播放时在同一个窗口里打开旧页面，顶栏标出“只读 · 画布标题”。在旧页面里继续点链接，跳的是那个画布的页面；“返回”回到本画布。</li>
+        <li>导出时，导出画板直接链接到的旧页面会一起打包成只读页面，导出的 HTML 里同样能跳过去。</li>
+      </ul>
       <Note>表达式是无副作用的 JavaScript 子集，写入时就会校验语法，写错了 AI 会立即收到错误。</Note>
 
       <H2 id="state-check">交互状态检查</H2>
