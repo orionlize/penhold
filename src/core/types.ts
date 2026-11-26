@@ -115,7 +115,7 @@ export type ProtoAction =
   | { do: 'toggle'; var: string }
   | { do: 'countdown'; var: string; from: number; interval?: number; then?: ProtoAction[] }
   | { do: 'stop'; var: string }
-  | { do: 'navigate'; frame: string }
+  | { do: 'navigate'; frame: string; /** 目标画板在别的画布（同一项目里的旧迭代）时填它的画布 id。 */ canvas?: string }
   | { do: 'back' }
   | { do: 'open'; url: string }
   | { do: 'delay'; ms: number; then: ProtoAction[] }
@@ -218,7 +218,7 @@ export interface DesignDoc {
 export interface ThemeInfo {
   system: string;
   theme: string;
-  themes: Array<{ id: string; name: string; scheme?: string; mode?: 'light' | 'dark'; swatch?: string }>;
+  themes: Array<{ id: string; name: string; style?: string; scheme?: string; mode?: 'light' | 'dark'; swatch?: string }>;
 }
 
 export type Origin = 'ai' | 'user';

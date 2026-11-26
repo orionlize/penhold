@@ -1,4 +1,5 @@
 // 节点树 → HTML/CSS 渲染器。画布与导出共用（PRD 第 5、7 节）。
+import { BACK_HREF, hrefFrame } from './links.js';
 import { cssNameError, cssValueError, layoutConflicts } from './customCss.js';
 import { findFrameOfAddr, getIndex, inferRender, isButton, mergeOverride } from './doc.js';
 import { frameVars, hasTemplate, mergeProto, renderTemplate, truthy } from './proto.js';
@@ -40,11 +41,8 @@ export interface RenderOptions {
   vars?: Record<string, ProtoValue>;
 }
 
-/** 链接到画板："#<画板id>"；返回上一页："#back"。 */
-export const BACK_HREF = '#back';
-export function hrefFrame(href: string | undefined): string | undefined {
-  return href && href.startsWith('#') && href !== BACK_HREF ? href.slice(1) : undefined;
-}
+/** 链接到画板："#<画板id>"；跨画布："#<画布id>/<画板id>"；返回上一页："#back"。 */
+export { BACK_HREF, hrefFrame, hrefTarget } from './links.js';
 
 /**
  * 播放预览时画板的屏幕高度：固定高度的画板用它自己的高度；auto 高度的画板按宽度推断设备屏幕

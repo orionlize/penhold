@@ -1,5 +1,5 @@
-// 画布内的 Tweaks 浮动面板（参照 Claude Design）：切换设计系统的主题，并调节 AI 用 tweaks_set 暴露的令牌。
-// 控件的值就是令牌的值，改动走普通的 set_tokens（可撤销）；主题切换由守护进程把该主题的颜色写进画布。
+// 画布内的 Tweaks 浮动面板（参照 Claude Design）：切换设计系统的主题（风格、配色、明暗），并调节 AI 用 tweaks_set 暴露的令牌。
+// 控件的值就是令牌的值，改动走普通的 set_tokens（可撤销）；主题切换由守护进程把该主题的令牌写进画布。
 import { useEffect, useRef, useState } from 'react';
 import type { ThemeInfo, Tweak } from '../../../src/core/types';
 import { commitOps, send, useStore } from '../store';
@@ -55,13 +55,19 @@ function ColorCtl({ label, value, disabled, onCommit }: { label: string; value: 
 
 type ThemeItem = ThemeInfo['themes'][number];
 const modeOf = (th: ThemeItem) => th.mode ?? (/(^|-)dark$/.test(th.id) ? 'dark' : 'light');
+const names = (xs: Array<string | undefined>) => [...new Set(xs.filter((x): x is string => !!x))];
 
-/** 主题切换：有多套配色时分“配色”与“明暗”两组，否则平铺全部主题。 */
+/**
+ * 主题切换：系统带几种风格或配色时按“风格 / 配色 / 明暗”分组，换其中一项时尽量保持其余两项；
+ * 主题没有分组信息时（如导入的亮 / 暗主题）平铺全部主题。
+ */
 function ThemeSwitch({ info, disabled }: { info: ThemeInfo; disabled: boolean }) {
   const pick = (id: string) => id !== info.theme && send({ t: 'set_theme', theme: id });
   const cur = info.themes.find((th) => th.id === info.theme) ?? info.themes[0];
-  const schemes = [...new Set(info.themes.map((th) => th.scheme).filter((x): x is string => !!x))];
-  if (schemes.length < 2)
+  const styles = names(info.themes.map((th) => th.style));
+  const inStyle = info.themes.filter((th) => th.style === cur.style);
+  const schemes = names(inStyle.map((th) => th.scheme));
+  if (styles.length < 2 && schemes.length < 2)
     return (
       <>
         <h4>{t('tweaks.theme')}</h4>
@@ -75,25 +81,31 @@ function ThemeSwitch({ info, disabled }: { info: ThemeInfo; disabled: boolean })
       </>
     );
   const mode = modeOf(cur);
-  // 换配色时保持当前明暗；换明暗时保持当前配色
-  const inScheme = (s: string) => info.themes.filter((th) => th.scheme === s);
-  const modes = inScheme(cur.scheme ?? schemes[0]);
-  return (
+  // 换风格时保持配色与明暗，换配色时保持明暗；没有完全对应的就退一步
+  const closest = (list: ThemeItem[]) =>
+    list.find((th) => th.scheme === cur.scheme && modeOf(th) === mode) ?? list.find((th) => th.scheme === cur.scheme) ?? list.find((th) => modeOf(th) === mode) ?? list[0];
+  const choices = (key: 'tweaks.style' | 'tweaks.scheme', cls: string, list: string[], now: string | undefined, of: (name: string) => ThemeItem[]) => (
     <>
-      <h4>{t('tweaks.scheme')}</h4>
-      <div className="tw-schemes" role="radiogroup" aria-label={t('tweaks.scheme')}>
-        {schemes.map((s) => {
-          const list = inScheme(s);
-          const target = list.find((th) => modeOf(th) === mode) ?? list[0];
-          const on = cur.scheme === s;
+      <h4>{t(key)}</h4>
+      <div className={cls} role="radiogroup" aria-label={t(key)}>
+        {list.map((n) => {
+          const target = closest(of(n));
+          const on = now === n;
           return (
-            <button key={s} role="radio" aria-checked={on} className={on ? 'on' : ''} disabled={disabled} title={s} onClick={() => pick(target.id)}>
-              <i style={{ background: target.swatch ?? list.find((th) => th.swatch)?.swatch ?? 'var(--muted)' }} />
-              <span>{s}</span>
+            <button key={n} role="radio" aria-checked={on} className={on ? 'on' : ''} disabled={disabled} title={n} onClick={() => pick(target.id)}>
+              <i style={{ background: target.swatch ?? of(n).find((th) => th.swatch)?.swatch ?? 'var(--muted)' }} />
+              <span>{n}</span>
             </button>
           );
         })}
       </div>
+    </>
+  );
+  const modes = inStyle.filter((th) => th.scheme === cur.scheme);
+  return (
+    <>
+      {styles.length > 1 && choices('tweaks.style', 'tw-schemes tw-styles', styles, cur.style, (n) => info.themes.filter((th) => th.style === n))}
+      {schemes.length > 1 && choices('tweaks.scheme', 'tw-schemes', schemes, cur.scheme, (n) => inStyle.filter((th) => th.scheme === n))}
       {modes.length > 1 && (
         <>
           <h4>{t('tweaks.mode')}</h4>

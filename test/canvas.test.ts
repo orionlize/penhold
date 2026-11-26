@@ -267,6 +267,22 @@ test('missingNotesHint: reminds about UI frames without AI interaction notes', a
   c.close();
 });
 
+test('missingNotesHint 只要求补 AI 最近一轮改过的画板', async () => {
+  const { missingNotesHint } = await import('../src/server/mcp.ts');
+  const c = new Canvas('66666666-2222-4333-8444-777777777777', { title: 'n', cwd: '/x' });
+  await c.acquireLock('s');
+  const mk = (id: string, i: number) => ({ op: 'frame_create', index: i, frame: { id, name: id, width: 390, height: 'auto', root: { id, type: 'page' } } }) as const;
+  c.commit('ai', [mk('fa', 0), mk('fb', 1)], { session: 's' });
+  c.markChecked(['fa', 'fb']);
+  assert.equal(c.lock, null);
+  // 新一轮只加了 fc：旧画板 fa、fb 没说明也不再要求
+  await c.acquireLock('s2');
+  c.commit('ai', [mk('fc', 2)], { session: 's2' });
+  const h = missingNotesHint(c);
+  assert.ok(h.includes('（fc）') && !h.includes('（fa）') && !h.includes('（fb）'), h);
+  c.close();
+});
+
 test('design_annotate: AI notes are tagged, cross-frame arrows convert coordinates, user notes are protected', async () => {
   const { applyAnnotations } = await import('../src/server/canvas/annotate.ts');
   const c = new Canvas('22222222-2222-4333-8444-555555555555', { title: 'a', cwd: '/x' });
@@ -375,6 +391,32 @@ test('set_theme 把系统的主题颜色写进画布并可撤销', async () => {
   assert.throws(() => c.setSystemTheme('nope'));
   c.undo();
   assert.equal(c.doc.tokens['color.bg'], '#ffffff');
+  c.close();
+});
+
+test('set_theme 切换风格时一并写入字体、圆角与阴影，切回默认风格时还原', async () => {
+  const { saveSystem } = await import('../src/server/design/systems.ts');
+  const { flattenSystem } = await import('../src/core/designSystem.ts');
+  const { suggestDirections, systemFromDirection } = await import('../src/server/design/directions.ts');
+  const cards = suggestDirections({ seed: 9, count: 3 });
+  const ds = systemFromDirection(cards[0].id, { id: 'st-sys', name: 'St', device: 'mobile', styles: { cards: [cards[1].id, cards[2].id] } })!;
+  saveSystem(ds);
+  const main = ds.color.themes[0];
+  const alt = ds.color.themes.find((t) => t.style !== main.style)!;
+  const c = new Canvas('99999999-2222-4333-8444-666666666666', { title: 't', cwd: '/x' });
+  c.doc.tokens = { ...flattenSystem(ds), 'space.9': '72px' };
+  c.meta.system = { id: 'st-sys', version: 1, theme: main.id, installedAt: 0 };
+  const info = c.themeInfo()!;
+  assert.equal(new Set(info.themes.map((t) => t.style)).size, 3);
+  c.setSystemTheme(alt.id);
+  const want = flattenSystem(ds, alt.id);
+  for (const k of ['color.primary', 'font.heading', 'radius.md', 'shadow.md']) assert.equal(c.doc.tokens[k], want[k], k);
+  assert.equal(c.doc.tokens['space.9'], '72px', '主题没覆盖的令牌不动');
+  c.undo();
+  assert.deepEqual(c.doc.tokens, { ...flattenSystem(ds), 'space.9': '72px' }, '一步撤销');
+  c.setSystemTheme(alt.id);
+  c.setSystemTheme(main.id);
+  assert.deepEqual(c.doc.tokens, { ...flattenSystem(ds), 'space.9': '72px' }, '切回默认风格时还原字体、圆角与阴影');
   c.close();
 });
 

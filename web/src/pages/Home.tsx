@@ -1,4 +1,4 @@
-// 画布首页：列出所有画布，支持重命名、复制、删除（移入回收站）。
+// 画布首页：按项目（工作目录）分组列出画布，组内按创建时间排成各轮迭代；支持重命名、复制、删除（移入回收站）。
 import { useEffect, useState } from 'react';
 import { t } from '../i18n';
 import { SystemList } from './SystemList';
@@ -8,6 +8,7 @@ interface Item {
   title: string;
   cwd: string;
   updatedAt: number;
+  createdAt: number;
   online: boolean;
   aliases: string[];
 }
@@ -34,17 +35,25 @@ export function Home() {
       </header>
       {err && <div className="warn">{err}</div>}
       <h2 className="home-h2">{t('home.canvases')}</h2>
+      {list && !list.length && <div className="dim">{t('home.empty')}</div>}
+      {groups(list ?? []).map(({ cwd, items }) => (
+      <section key={cwd} className="home-project">
+        <h3 className="home-h3" title={cwd}>
+          {cwd ? cwd.split(/[\\/]/).filter(Boolean).pop() : t('home.noProject')}
+          <span className="dim">{cwd}</span>
+          {items.length > 1 ? <span className="dim">{t('home.iterations', { n: items.length })}</span> : null}
+        </h3>
       <div className="cards">
-        {list?.map((c) => (
+        {items.map((c, i) => (
           <div key={c.id} className="card">
             <a href={`/c/${c.id}`} className="card-title">
+              {items.length > 1 ? <span className="iter">{t('home.round', { n: i + 1 })}</span> : null}
               {c.title}
               {c.online && <span className="online">{t('home.online')}</span>}
             </a>
             <div className="dim mono" title={c.id}>
               {c.id}
             </div>
-            <div className="dim">{c.cwd}</div>
             <div className="dim">{t('home.updated', { time: new Date(c.updatedAt).toLocaleString() })}</div>
             <div className="card-acts">
               <button
@@ -62,9 +71,20 @@ export function Home() {
             </div>
           </div>
         ))}
-        {list && !list.length && <div className="dim">{t('home.empty')}</div>}
       </div>
+      </section>
+      ))}
       <SystemList />
     </div>
   );
+}
+
+/** 按工作目录分组：最近更新的项目在前，组内按创建时间先后（第 1 轮、第 2 轮……）。 */
+function groups(list: Item[]): Array<{ cwd: string; items: Item[] }> {
+  const map = new Map<string, Item[]>();
+  for (const c of list) map.set(c.cwd, [...(map.get(c.cwd) ?? []), c]);
+  return [...map]
+    .map(([cwd, items]) => ({ cwd, items: items.sort((a, b) => a.createdAt - b.createdAt), last: Math.max(...items.map((x) => x.updatedAt)) }))
+    .sort((a, b) => b.last - a.last)
+    .map(({ cwd, items }) => ({ cwd, items }));
 }

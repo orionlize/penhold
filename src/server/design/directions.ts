@@ -7,7 +7,7 @@ import { canvasDir } from '../paths.js';
 import { catalog, GUIDES_DIR, matchPresets, type FontPair, type Product, type Style } from './presets.js';
 import { installedFonts } from './localFonts.js';
 import { contrast as wcag, ensureContrast, fromOklch, HEX6 as HEX, hueGap as gap, onColor, toOklch } from '../../core/color.js';
-import { deriveTheme, fixContrast, systemFromFlat, textStyles, type DesignSystem, type Density, type Weights } from '../../core/designSystem.js';
+import { deriveTheme, fixContrast, flattenSystem, systemFromFlat, textStyles, THEME_TOKEN, type DesignSystem, type Density, type Weights } from '../../core/designSystem.js';
 
 /** 中文字体的类别：黑体、宋体、圆体、楷体。 */
 export type CjkRole = 'sans' | 'serif' | 'round' | 'kai';
@@ -800,6 +800,8 @@ export interface DirectionRecord {
   /** 按题材指定的主色；色板按它重算。 */
   primary?: string;
   signature: string;
+  /** 用户没在问卷里选定风格时，同一批卡片里的其余方向：建系统时生成为 Tweaks 面板里可切换的备选风格。 */
+  alternates?: string[];
 }
 
 /** 同项目其他画布已用过的主色与方向原型，用来让新画布避开。 */
@@ -823,8 +825,13 @@ export function recentUsage(canvasIds: string[]): { colors: string[]; archetypes
 
 export const archetypeIds = () => ARCHETYPES.map((a) => a.id);
 
-/** 同一张卡片的另一种明暗。 */
-const OTHER_THEME = { light: { id: 'dark', name: '暗色' }, dark: { id: 'light', name: '亮色' } } as const;
+const MODE_NAME = { light: '亮色', dark: '暗色' } as const;
+type Mode = keyof typeof MODE_NAME;
+/** 一个系统最多几个主题（与设计系统编辑页的校验一致）。 */
+const MAX_THEMES = 12;
+const THEME_ID = /^[a-z][a-z0-9-]{0,23}$/;
+/** Tweaks 面板上的风格名：原型名去掉副标题。 */
+const styleName = (a: Archetype) => a.name.split(' · ')[0];
 
 export interface SystemFromDirection {
   id: string;
@@ -834,19 +841,49 @@ export interface SystemFromDirection {
   primary?: string;
   concept?: string;
   motif?: string;
-  /** 另生成一套相反明暗的主题（默认 true）。 */
-  bothThemes?: boolean;
   /**
-   * 另外几套配色（用户在问卷里多选了主色）：每套按同一方向、以它的主色重算色板，生成 <id>-light / <id>-dark 两个主题，
-   * 在 Tweaks 面板里按“配色 × 明暗”切换。主色与主配色相同的会被忽略。
+   * 生成哪几种明暗。缺省只生成方向本身的明暗（不默认带一套相反的主题）；
+   * 用户要深色而方向是浅色（或反过来）时传那一种，由方向推导；两种都要时传两种，方向本身的明暗排在前面。
+   */
+  modes?: Mode[];
+  /**
+   * 另外几套配色（用户在问卷里多选了主色）：每套按同一方向、以它的主色重算色板，生成 <id>-<明暗> 主题，
+   * 在 Tweaks 面板里按“配色”切换。主色与主配色相同的会被忽略。
    */
   schemes?: Array<{ id: string; name: string; primary: string }>;
-  /** 主配色（light / dark 主题）的显示名，缺省“默认”。 */
+  /** 主配色的显示名，缺省“默认”。 */
   schemeName?: string;
+  /**
+   * 备选风格（用户没在问卷里选定风格时，同一批卡片里的其余方向）：每张按同样的明暗与配色生成 v<n>-… 主题，
+   * 除颜色外还覆盖字体、圆角与阴影令牌，在 Tweaks 面板里按“风格”切换。原型与主方向相同的会被忽略。
+   * primary：用户指定过主色时传入，备选风格也按它重算色板；缺省用各自卡片的色板。
+   */
+  styles?: { cards: string[]; primary?: string };
+}
+
+/** 去掉一个主题及它的颜色值。 */
+function dropTheme(ds: DesignSystem, id: string) {
+  ds.color.themes = ds.color.themes.filter((t) => t.id !== id);
+  for (const t of ds.color.tokens) delete t.value[id];
+}
+
+/** 把另一个系统的主题并进来：颜色按名字对齐，主题 id 与显示名由 map 决定。 */
+function mergeThemes(ds: DesignSystem, sub: DesignSystem, map: (th: DesignSystem['color']['themes'][number]) => DesignSystem['color']['themes'][number] | undefined) {
+  const subFirst = sub.color.themes[0]?.id;
+  for (const th of sub.color.themes) {
+    const next = map(th);
+    if (!next || !THEME_ID.test(next.id) || ds.color.themes.length >= MAX_THEMES || ds.color.themes.some((x) => x.id === next.id)) continue;
+    for (const t of sub.color.tokens) {
+      const mine = ds.color.tokens.find((x) => x.name === t.name);
+      const v = t.value[th.id] ?? (subFirst ? t.value[subFirst] : undefined);
+      if (mine && v) mine.value[next.id] = v;
+    }
+    ds.color.themes.push(next);
+  }
 }
 
 /**
- * 由方向卡片生成一个“小而完整”的设计系统：颜色（带用途，亮 / 暗两套主题）、按原型密度的字阶、
+ * 由方向卡片生成一个“小而完整”的设计系统：颜色（带用途，按需的明暗、配色与风格主题）、按原型密度的字阶、
  * 组合文字样式、间距、圆角、阴影，以及品牌说明（概念、母题、记忆点、形状、版式、不要做的事）。
  */
 export function systemFromDirection(cardId: string, o: SystemFromDirection): DesignSystem | undefined {
@@ -859,16 +896,16 @@ export function systemFromDirection(cardId: string, o: SystemFromDirection): Des
     device: o.device,
     density: a.density,
     weights: a.weights,
-    theme: a.tone === 'dark' ? { id: 'dark', name: '暗色' } : { id: 'light', name: '亮色' },
+    theme: { id: a.tone, name: MODE_NAME[a.tone] },
     source: { kind: 'direction', ref: cardId },
   });
   ds.type.styles = textStyles(ds.type.scale, a.weights, a.density, o.device === 'desktop' ? Math.round(a.display * 1.6) : a.display);
   // 输入框描边要能看清控件边界（3:1），分隔线 border 可以更浅
-  const first = ds.color.themes[0].id;
-  const border = ds.color.tokens.find((t) => t.name === 'border')?.value[first];
-  const card = ds.color.tokens.find((t) => t.name === 'card')?.value[first];
+  const native = a.tone;
+  const border = ds.color.tokens.find((t) => t.name === 'border')?.value[native];
+  const card = ds.color.tokens.find((t) => t.name === 'card')?.value[native];
   if (border && card && HEX6.test(border) && HEX6.test(card) && !ds.color.tokens.some((t) => t.name === 'input'))
-    ds.color.tokens.push({ name: 'input', value: { [first]: ensureContrast(border, card, 3) }, usage: '输入框描边（控件边界，要求 3:1）' });
+    ds.color.tokens.push({ name: 'input', value: { [native]: ensureContrast(border, card, 3) }, usage: '输入框描边（控件边界，要求 3:1）' });
   ds.brand = {
     ...(o.concept ? { concept: o.concept } : {}),
     ...(o.motif ? { motif: o.motif } : {}),
@@ -881,38 +918,63 @@ export function systemFromDirection(cardId: string, o: SystemFromDirection): Des
     ...(d.fonts.notes ? { notes: `字体：${d.fonts.notes}` } : {}),
   };
   fixContrast(ds);
-  if (o.bothThemes !== false) {
-    deriveTheme(ds, first, { ...OTHER_THEME[a.tone] }, a.tone === 'dark' ? 'light' : 'dark');
-    fixContrast(ds);
-  }
+  const modes = [...new Set<Mode>(o.modes?.length ? o.modes : [native])].sort((x, y) => Number(y === native) - Number(x === native));
+  for (const m of modes)
+    if (m !== native) {
+      deriveTheme(ds, native, { id: m, name: MODE_NAME[m] }, m);
+      fixContrast(ds);
+    }
+  if (!modes.includes(native)) dropTheme(ds, native);
   const primaryOf = (x: DesignSystem, th: string) => x.color.tokens.find((t) => t.name === 'primary')?.value[th];
   for (const th of ds.color.themes) {
     th.mode = th.id === 'dark' ? 'dark' : 'light';
     const sw = primaryOf(ds, th.id);
     if (sw && HEX6.test(sw)) th.swatch = sw.toUpperCase();
   }
-  const mainPrimary = (primaryOf(ds, first) ?? '').toUpperCase();
-  const extra = (o.schemes ?? []).filter((s, i, all) => HEX6.test(s.primary) && s.primary.toUpperCase() !== mainPrimary && /^[a-z][a-z0-9]{0,15}$/.test(s.id) && s.id !== 'light' && s.id !== 'dark' && all.findIndex((x) => x.id === s.id) === i);
+  // 备选风格：原型各不相同，且与主方向不同
+  const seen = new Set([a.id]);
+  const alts = (o.styles?.cards ?? []).filter((id) => {
+    const x = archetypeOfCard(id);
+    if (!x || seen.has(x.id)) return false;
+    seen.add(x.id);
+    return true;
+  });
+  // 风格 × 配色 × 明暗不超过 MAX_THEMES：风格多时少留几套配色
+  const room = Math.max(0, Math.floor(MAX_THEMES / ((1 + alts.length) * modes.length)) - 1);
+  const mainPrimary = (primaryOf(ds, ds.color.themes[0].id) ?? '').toUpperCase();
+  const extra = (o.schemes ?? [])
+    .filter((s, i, all) => HEX6.test(s.primary) && s.primary.toUpperCase() !== mainPrimary && /^[a-z][a-z0-9]{0,15}$/.test(s.id) && s.id !== 'light' && s.id !== 'dark' && all.findIndex((x) => x.id === s.id) === i)
+    .slice(0, Math.min(4, room));
   if (extra.length) {
     const mainName = o.schemeName ?? '默认';
     for (const th of ds.color.themes) {
       th.scheme = mainName;
       th.name = `${mainName} · ${th.name}`;
     }
-    for (const s of extra.slice(0, 4)) {
-      const sub = systemFromDirection(cardId, { ...o, primary: s.primary, schemes: undefined, schemeName: undefined });
-      if (!sub) continue;
-      for (const th of sub.color.themes) {
-        const id = `${s.id}-${th.id}`;
-        if (ds.color.themes.some((x) => x.id === id)) continue;
-        for (const t of sub.color.tokens) {
-          const mine = ds.color.tokens.find((x) => x.name === t.name);
-          const v = t.value[th.id];
-          if (mine && v) mine.value[id] = v;
-        }
-        ds.color.themes.push({ id, name: `${s.name} · ${th.name}`, scheme: s.name, mode: th.mode, ...(th.swatch ? { swatch: th.swatch } : {}) });
-      }
+    for (const s of extra) {
+      const sub = systemFromDirection(cardId, { ...o, primary: s.primary, schemes: undefined, schemeName: undefined, styles: undefined });
+      if (sub) mergeThemes(ds, sub, (th) => ({ ...th, id: `${s.id}-${th.id}`, name: `${s.name} · ${th.name}`, scheme: s.name }));
     }
+  }
+  if (alts.length) {
+    const main = styleName(a);
+    for (const th of ds.color.themes) {
+      th.style = main;
+      th.name = `${main} · ${th.name}`;
+    }
+    const base = ds.type.families;
+    alts.forEach((card, i) => {
+      // 用户指定过主色时备选风格也用这几套配色；否则用各自卡片的色板
+      const sub = systemFromDirection(card, { ...o, primary: o.styles?.primary, concept: undefined, motif: undefined, schemes: o.styles?.primary ? extra : undefined, styles: undefined });
+      const sa = archetypeOfCard(card);
+      if (!sub || !sa) return;
+      // 风格换的是颜色、字体、圆角与阴影；字阶、间距与文字样式沿用主方向，避免已排好的版面走样
+      const flat = flattenSystem(sub);
+      const tokens = Object.fromEntries(Object.entries(flat).filter(([k]) => THEME_TOKEN.test(k) && (!k.startsWith('font.') || k.slice(5) in base)));
+      const name = styleName(sa);
+      mergeThemes(ds, sub, (th) => ({ ...th, id: `v${i + 2}-${th.id}`, name: `${name} · ${th.name}`, style: name, tokens }));
+    });
+    fixContrast(ds);
   }
   return ds;
 }

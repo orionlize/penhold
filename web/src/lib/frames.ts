@@ -30,6 +30,8 @@ export class FrameView {
   vars?: Record<string, ProtoValue>;
   private ro?: ResizeObserver;
   private revealing: { els: HTMLElement[]; i: number; timer?: ReturnType<typeof setTimeout> } | null = null;
+  /** 正在播放的淡入动画（finishReveal 时直接走完）。 */
+  private fades = new Set<Animation>();
   private queuedReveal: string[] = [];
 
   constructor(public frameId: string, private canvasId: string, private getDoc: () => DesignDoc | null) {}
@@ -161,7 +163,11 @@ export class FrameView {
         if (!el.isConnected) continue;
         el.removeAttribute('data-dm-pending');
         const to = this.iframe?.contentWindow?.getComputedStyle(el).opacity ?? '1';
-        el.animate?.([{ opacity: 0 }, { opacity: to }], { duration: 180, easing: 'ease-out' });
+        const anim = el.animate?.([{ opacity: 0 }, { opacity: to }], { duration: 180, easing: 'ease-out' });
+        if (anim) {
+          this.fades.add(anim);
+          anim.onfinish = anim.oncancel = () => this.fades.delete(anim);
+        }
         last = el;
       }
       if (last) this.onRevealStep?.(last.getAttribute('data-node-id'));
@@ -179,6 +185,8 @@ export class FrameView {
 
   /** 立即显示全部（用户操作、截图、新的写入到来时）。 */
   finishReveal() {
+    // 已显示节点的淡入动画也直接走完：截图与检查不能看到半透明的文字
+    for (const a of [...this.fades]) a.finish();
     const r = this.revealing;
     if (!r) return;
     clearTimeout(r.timer);

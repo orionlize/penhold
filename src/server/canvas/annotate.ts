@@ -1,6 +1,7 @@
 // AI 说明批注（design_annotate）：便签、文字、箭头、连线，写在画布上但不进入设计稿、导出与撤销栈。
 import { FRAME_GAP, frameX, HEADER_CLEARANCE, newId, resolveAddress } from '../../core/doc.js';
 import { connect, FlowError, layoutFlow, parseFlow } from '../../core/mermaid.js';
+import type { RefCard } from '../../core/links.js';
 import type { Annotation, StrokeDash } from '../../core/types.js';
 import type { Canvas } from './canvas.js';
 import { CanvasError } from './canvas.js';
@@ -46,6 +47,9 @@ export interface FlowInput {
   width?: number;
 }
 
+/** 引用卡片及其页面名称（流程图里按名称对应旧画布的页面）。 */
+export type NamedRef = RefCard & { name: string };
+
 const FLOW_COLORS = { decision: '#FDF1D6', terminal: '#E3F4E8' } as const;
 
 /**
@@ -53,7 +57,7 @@ const FLOW_COLORS = { decision: '#FDF1D6', terminal: '#E3F4E8' } as const;
  * 画板之间相邻的跳转画成画板间的横向箭头，不相邻的从画板上方绕行，避免穿过中间的画板。
  * frameHeights 给出各画板的实际高度（auto 高度的画板由调用方实测）。
  */
-export function flowToNotes(c: Canvas, flow: FlowInput, frameHeights: Map<string, number>): { notes: AiNoteInput[]; frames: string[]; boxes: number } {
+export function flowToNotes(c: Canvas, flow: FlowInput, frameHeights: Map<string, number>, refs: NamedRef[] = []): { notes: AiNoteInput[]; frames: string[]; boxes: number } {
   const doc = c.doc;
   let g;
   try {
@@ -63,9 +67,15 @@ export function flowToNotes(c: Canvas, flow: FlowInput, frameHeights: Map<string
     throw e;
   }
   const frameOf = new Map<string, string>();
+  const refOf = new Map<string, NamedRef>();
   for (const n of g.nodes) {
     const f = doc.frames.find((q) => q.id === n.id || q.name === n.id || (n.text !== n.id && q.name === n.text));
     if (f) frameOf.set(n.id, f.id);
+    else {
+      // 旧画布里被链接的页面（画布上的引用卡片）：按页面 id 或名称对应
+      const r = refs.find((q) => q.frame === n.id || q.name === n.id || (n.text !== n.id && q.name === n.text));
+      if (r) refOf.set(n.id, r);
+    }
   }
   const frameRect = (id: string) => {
     const f = doc.frames.find((q) => q.id === id)!;
@@ -74,7 +84,7 @@ export function flowToNotes(c: Canvas, flow: FlowInput, frameHeights: Map<string
   const bw = Math.round(flow.width ?? 200);
   const textOf = new Map(g.nodes.map((n) => [n.id, n.text]));
   const size = (id: string) => ({ w: bw, h: lineCount(textOf.get(id) ?? id, bw - BOX_PAD * 2, BOX_FONT) * BOX_LINE + BOX_PAD * 2 });
-  const placed = layoutFlow(g, size, new Set(frameOf.keys()));
+  const placed = layoutFlow(g, size, new Set([...frameOf.keys(), ...refOf.keys()]));
   let ox: number;
   let oy: number;
   if (flow.at) {
@@ -88,10 +98,11 @@ export function flowToNotes(c: Canvas, flow: FlowInput, frameHeights: Map<string
   const rect = new Map<string, { x: number; y: number; w: number; h: number }>();
   for (const p of placed) rect.set(p.id, { x: p.x + ox, y: p.y + oy, w: p.w, h: p.h });
   for (const [id, f] of frameOf) rect.set(id, frameRect(f));
+  for (const [id, r] of refOf) rect.set(id, { x: r.x, y: r.y, w: r.w, h: r.h });
 
   const notes: AiNoteInput[] = [];
   for (const n of g.nodes) {
-    if (frameOf.has(n.id)) continue;
+    if (frameOf.has(n.id) || refOf.has(n.id)) continue;
     const r = rect.get(n.id)!;
     notes.push({ kind: 'rect', at: [r.x, r.y], width: r.w, height: r.h, text: n.text, ...(n.shape !== 'box' ? { color: FLOW_COLORS[n.shape] } : {}) });
   }
@@ -185,7 +196,7 @@ function lineCount(text: string, width: number, font: number) {
 const aiId = () => newId('a');
 
 /** 应用 AI 批注的增删改，返回结果摘要。只能修改 / 删除 AI 自己写的批注。 */
-export function applyAnnotations(c: Canvas, args: AnnotateArgs, frameHeights: Map<string, number> = new Map()) {
+export function applyAnnotations(c: Canvas, args: AnnotateArgs, frameHeights: Map<string, number> = new Map(), refs: NamedRef[] = []) {
   const doc = c.doc;
   const ensureFrame = (id: string | undefined, what: string) => {
     if (id === undefined) return undefined;
@@ -222,7 +233,7 @@ export function applyAnnotations(c: Canvas, args: AnnotateArgs, frameHeights: Ma
   }
 
   const written: Array<{ id: string; kind: string; frame?: string; box_xywh?: number[]; updated?: boolean; warnings?: string[] }> = [];
-  const flow = args.flow ? flowToNotes(c, args.flow, frameHeights) : undefined;
+  const flow = args.flow ? flowToNotes(c, args.flow, frameHeights, refs) : undefined;
   const adds = [...(args.add ?? []), ...(flow?.notes ?? [])];
   const nAdd = args.add?.length ?? 0;
   if (flow && c.notes.filter((x) => x.by === 'ai').length + flow.notes.length > MAX_AI_NOTES)
@@ -233,6 +244,12 @@ export function applyAnnotations(c: Canvas, args: AnnotateArgs, frameHeights: Ma
     const local = (p: PointInput | undefined, name: string): [number, number] => {
       if (!p) throw new CanvasError(`${where}：${a.kind} 需要 ${name}`, 'bad_args');
       if (Array.isArray(p)) return [Math.round(p[0]), Math.round(p[1])];
+      if (p.frame?.includes('/')) {
+        // "<画布id>/<画板id>"：相对画布上的引用卡片（旧画布里被链接的页面）
+        const r = refs.find((q) => `${q.canvas}/${q.frame}` === p.frame);
+        if (!r) throw new CanvasError(`${where}.${name}：本画布没有链接到 ${p.frame}，没有对应的引用卡片`, 'not_found');
+        return [Math.round(r.x + p.x - ox), Math.round(r.y + p.y)];
+      }
       const px = p.frame === undefined ? (a.frame === undefined ? 0 : ox) : ensureFrame(p.frame, `${where}.${name}`)!;
       return [Math.round(px + p.x - ox), Math.round(p.y)];
     };

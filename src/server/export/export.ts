@@ -2,13 +2,13 @@
 // 设计稿带交互（proto / #back）时内嵌一段交互脚本：与画布播放共用 protoEngine 的源码。
 import fs from 'node:fs';
 import path from 'node:path';
+import { crossLinks, hrefTarget } from '../../core/links.js';
 import {
   BACK_HREF,
   collectFonts,
   cssLen,
   fontFamilyCss,
   escHtml,
-  hrefFrame,
   newSerializeState,
   RESET_CSS,
   renderFrame,
@@ -29,6 +29,21 @@ export interface ExportOptions {
   widthMode?: 'fixed' | 'fill'; // 默认 fixed
   split?: boolean; // 多画板时每画板一个文件（zip）
   interactive?: boolean; // 默认 true：执行 proto 交互逻辑（内嵌脚本）；false 时只输出初始状态、无脚本
+  /**
+   * 读取同一项目的其他画布（旧迭代）。提供时，导出画板直接链接到的旧画布页面一并打包为只读页面，
+   * 跨画布链接在导出结果里照常跳转；不提供时这类链接不渲染为链接。
+   */
+  foreign?: (canvasId: string) => { doc: DesignDoc; dir: string } | undefined;
+}
+
+/** 导出的一个页面：本画布的画板，或打包进来的旧画布页面（canvas 为其画布 id）。 */
+interface Item {
+  f: Frame;
+  doc: DesignDoc;
+  dir: string;
+  /** 页面键：本画布为画板 id，旧画布为 "<画布id>/<画板id>"。 */
+  key: string;
+  canvas?: string;
 }
 
 /** 令牌值 → 导出页里 :root 变量的值（与 tokensCss 一致）。 */
@@ -113,10 +128,12 @@ var E = createProtoEngine();
 var radios = Array.prototype.slice.call(document.querySelectorAll('input.dm-r'));
 var cur = 0, hist = [0];
 var nav = {
-  go: function (id) {
-    var i = D.ids.indexOf(id);
+  go: function (id, canvas) {
+    var c = canvas || D.canv[cur];
+    var key = c && c !== D.own ? c + '/' + id : id;
+    var i = D.ids.indexOf(key);
     if (i >= 0) { if (radios[i]) radios[i].checked = true; enter(i, true); }
-    else if (D.files[id]) location.href = D.files[id];
+    else if (D.files[key]) location.href = D.files[key];
   },
   back: function () {
     if (hist.length > 1) { hist.pop(); var i = hist[hist.length - 1]; if (radios[i]) radios[i].checked = true; enter(i, false); }
@@ -125,6 +142,8 @@ var nav = {
   open: function (url) { if (/^(https?:|mailto:|tel:)/i.test(url)) window.open(url, '_blank', 'noopener'); },
   follow: function (href) {
     if (href === '#back') return nav.back();
+    var m = /^#([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\/(.+)$/.exec(href);
+    if (m) return nav.go(m[2], m[1]);
     if (href.charAt(0) === '#') return nav.go(href.slice(1));
     nav.open(href);
   }
@@ -184,46 +203,76 @@ export function buildExport(doc: DesignDoc, canvasDir: string, opts: ExportOptio
   const fill = opts.widthMode === 'fill';
   const warnings: string[] = [];
   const missing = new Set<string>();
-  const usedAssets = new Set<string>();
 
-  const asset = (hash: string) => {
-    const a = doc.assets[hash];
+  // 资源按所在画布取：打包进来的旧画布页面用它自己画布的图片
+  const usedFiles = new Map<string, string>();
+  const assetFor = (d: DesignDoc, dir: string) => (hash: string) => {
+    const a = d.assets[hash];
     if (!a) return undefined;
-    const p = path.join(canvasDir, 'assets', 'images', a.file);
+    const p = path.join(dir, 'assets', 'images', a.file);
     if (!fs.existsSync(p)) return undefined;
-    usedAssets.add(hash);
+    usedFiles.set(a.file, p);
     return inline ? `data:${a.mime};base64,${fs.readFileSync(p).toString('base64')}` : `assets/${a.file}`;
   };
 
-  const fonts = collectFonts(
-    doc,
-    frames.map((f) => f.root),
-  );
+  const own: Item[] = frames.map((f) => ({ f, doc, dir: canvasDir, key: f.id }));
+  // 直接链接到的旧画布页面（只打包一层，不再顺着它们的链接继续找）
+  const extra: Item[] = [];
+  if (opts.foreign) {
+    const roots = [...frames.map((f) => f.root), ...Object.values(doc.components).map((c) => c.root)];
+    for (const t of crossLinks(roots)) {
+      if (!t.canvas || t.canvas === doc.canvasId) continue;
+      const src = opts.foreign(t.canvas);
+      const f = src?.doc.frames.find((x) => x.id === t.frame);
+      if (!src || !f) {
+        warnings.push(`跨画布链接的目标不存在：${t.canvas}/${t.frame}`);
+        continue;
+      }
+      extra.push({ f, doc: src.doc, dir: src.dir, key: `${t.canvas}/${t.frame}`, canvas: t.canvas });
+    }
+  }
+  const items = [...own, ...extra];
+
+  const fonts = (() => {
+    const map = new Map<string, Set<number>>();
+    const docs = new Map<DesignDoc, Frame[]>();
+    for (const it of items) docs.set(it.doc, [...(docs.get(it.doc) ?? []), it.f]);
+    for (const [d, fs_] of docs)
+      for (const x of collectFonts(d, fs_.map((f) => f.root))) {
+        const w = map.get(x.family) ?? new Set<number>();
+        for (const n of x.weights) w.add(n);
+        map.set(x.family, w);
+      }
+    return [...map].map(([family, w]) => ({ family, weights: [...w].sort((a, b) => a - b) }));
+  })();
 
   const interactive = opts.interactive !== false;
   /** 分文件导出时各画板所在文件，用于跨文件跳转。 */
   const files_: Record<string, string> = {};
 
-  const renderOne = (fs_: Frame[], title: string): string => {
+  const renderOne = (fs_: Item[], title: string): string => {
     const st = newSerializeState(styleMode);
     let needsScript = false;
     // 画板间跳转：多画板导出时渲染为切换对应单选框的 label；分文件导出时链接到对应文件；
-    // 目标不在导出结果中则不渲染为链接。"#back" 需要脚本。
-    const link = (href: string): { tag: string; attrs: Record<string, string> } | null => {
+    // 目标不在导出结果中则不渲染为链接。"#back" 需要脚本。旧画布页面里的本地链接指它自己画布的画板。
+    const linkFor = (from: Item) => (href: string): { tag: string; attrs: Record<string, string> } | null => {
       if (href === BACK_HREF) {
         if (!interactive) return null;
         needsScript = true;
         return { tag: 'div', attrs: { 'data-dm-href': href } };
       }
-      const target = hrefFrame(href);
-      if (target === undefined) return { tag: 'a', attrs: { href } };
-      const i = fs_.findIndex((f) => f.id === target);
+      const t = hrefTarget(href);
+      if (t === undefined) return { tag: 'a', attrs: { href } };
+      const c = t.canvas ?? from.canvas;
+      const key = c && c !== doc.canvasId ? `${c}/${t.frame}` : t.frame;
+      const i = fs_.findIndex((x) => x.key === key);
       if (i >= 0 && fs_.length > 1) return { tag: 'label', attrs: { for: `dm-f${i}` } };
-      if (files_[target]) return { tag: 'a', attrs: { href: files_[target] } };
+      if (files_[key]) return { tag: 'a', attrs: { href: files_[key] } };
       return null;
     };
     const runtime: Array<{ vars: Record<string, unknown>; entries: RuntimeEntry[] }> = [];
-    const bodies = fs_.map((f, fi) => {
+    const bodies = fs_.map((it, fi) => {
+      const f = it.f;
       const entries: RuntimeEntry[] = [];
       const proto = interactive
         ? (e: ProtoEntry) => {
@@ -231,8 +280,8 @@ export function buildExport(doc: DesignDoc, canvasDir: string, opts: ExportOptio
             return `${fi}-${entries.length - 1}`;
           }
         : undefined;
-      const h: HNode = renderFrame(doc, f, { mode: 'export', asset, missingAssets: missing, link, proto });
-      runtime.push({ vars: frameVars(doc, f), entries });
+      const h: HNode = renderFrame(it.doc, f, { mode: 'export', asset: assetFor(it.doc, it.dir), missingAssets: missing, link: linkFor(it), proto });
+      runtime.push({ vars: frameVars(it.doc, f), entries });
       if (entries.length) needsScript = true;
       if (fill) h.css = h.css.map((d) => (d.startsWith('width:') ? 'width:100%' : d));
       else h.css.push('margin:0 auto');
@@ -249,20 +298,33 @@ export function buildExport(doc: DesignDoc, canvasDir: string, opts: ExportOptio
     let main: string;
     if (multi) {
       radios = fs_.map((_, i) => `<input class="dm-r" type="radio" name="dm-frame" id="dm-f${i}"${i === 0 ? ' checked' : ''}>`).join('');
-      nav = `<nav class="dm-tabs">${fs_.map((f, i) => `<label for="dm-f${i}">${escHtml(f.name)}</label>`).join('')}</nav>`;
+      nav = `<nav class="dm-tabs">${fs_.map((it, i) => `<label for="dm-f${i}"${it.canvas ? ' class="dm-ro" title="只读：同一项目之前的画布里的页面"' : ''}>${escHtml(it.f.name)}</label>`).join('')}</nav>`;
       main = `<main>${bodies.map((b, i) => `<section class="dm-frame dm-s${i}" data-dm-frame="${i}">${b}</section>`).join('')}</main>`;
       switcherCss = [
         '.dm-r{position:absolute;opacity:0;pointer-events:none}',
         '.dm-tabs{position:sticky;top:0;z-index:2147483647;display:flex;gap:4px;padding:8px 12px;background:#111827;font:13px/1.4 system-ui,sans-serif}',
         '.dm-tabs label{color:#d1d5db;padding:4px 10px;border-radius:6px;cursor:pointer}',
         '.dm-frame{display:none}',
+        '.dm-tabs label.dm-ro{font-style:italic;opacity:.8}',
         ...fs_.map((_, i) => `#dm-f${i}:checked~main .dm-s${i}{display:block}#dm-f${i}:checked~nav label[for=dm-f${i}]{background:#374151;color:#fff}`),
       ].join('\n');
     } else main = `<main data-dm-frame="0">${bodies[0]}</main>`;
-    const script = needsScript ? `\n${bootScript({ ids: fs_.map((f) => f.id), files: files_, frames: runtime })}` : '';
+    const script = needsScript
+      ? `\n${bootScript({ ids: fs_.map((x) => x.key), canv: fs_.map((x) => x.canvas ?? ''), own: doc.canvasId, files: files_, frames: runtime })}`
+      : '';
+    // 旧画布页面的令牌与本画布不同时，限定在它自己的页面区块里覆盖
+    const scoped = fs_
+      .map((it, i) => {
+        if (it.doc === doc) return '';
+        const diff = Object.fromEntries(Object.entries(it.doc.tokens).filter(([k, v]) => doc.tokens[k] !== v));
+        const css = tokensCss(diff);
+        return css ? css.replace(/^:root/, multi ? `.dm-s${i}` : ':root') : '';
+      })
+      .filter(Boolean)
+      .join('\n');
     const protoCss = needsScript ? '[data-dm-click],[data-dm-href]{cursor:pointer}\n[data-dm-disabled],[data-dm-disabled] *{cursor:not-allowed}' : '';
     const tw = interactive ? tweaksPanel(doc) : { css: '', html: '' };
-    const css = [RESET_CSS, tokensCss(doc.tokens), fill ? '' : 'body{background:#fff}', switcherCss, protoCss, st.rules.join('\n'), tw.css]
+    const css = [RESET_CSS, tokensCss(doc.tokens), scoped, fill ? '' : 'body{background:#fff}', switcherCss, protoCss, st.rules.join('\n'), tw.css]
       .filter(Boolean)
       .join('\n');
     return `<!DOCTYPE html>\n${head}\n<html lang="zh-CN">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>${escHtml(title)}</title>\n<style>\n${css}\n</style>\n</head>\n<body>\n${radios}${nav}${main}${script}${tw.html ? `\n${tw.html}` : ''}\n</body>\n</html>\n`;
@@ -270,19 +332,22 @@ export function buildExport(doc: DesignDoc, canvasDir: string, opts: ExportOptio
 
   const base = slug(frames.length === 1 ? frames[0].name : `${frames[0].name}-等${frames.length}个画板`);
   const files: Array<{ name: string; data: Buffer }> = [];
-  if (frames.length > 1 && opts.split) {
-    for (const f of frames) files_[f.id] = `${slug(f.name)}.html`;
-    for (const f of frames) files.push({ name: `${slug(f.name)}.html`, data: Buffer.from(renderOne([f], f.name)) });
+  if (items.length > 1 && opts.split) {
+    const names = new Set<string>();
+    for (const it of items) {
+      let n = `${slug(it.f.name)}.html`;
+      for (let k = 2; names.has(n); k++) n = `${slug(it.f.name)}-${k}.html`;
+      names.add(n);
+      files_[it.key] = n;
+    }
+    for (const it of items) files.push({ name: files_[it.key], data: Buffer.from(renderOne([it], it.f.name)) });
   } else {
-    files.push({ name: inline ? `${base}.html` : 'index.html', data: Buffer.from(renderOne(frames, frames.map((f) => f.name).join(' / '))) });
+    files.push({ name: inline ? `${base}.html` : 'index.html', data: Buffer.from(renderOne(items, items.map((x) => x.f.name).join(' / '))) });
   }
   for (const h of missing) warnings.push(`图片资源缺失：asset:${h}`);
   // 也检查引用了但文档中没有登记的资源
   if (!inline) {
-    for (const h of usedAssets) {
-      const a = doc.assets[h];
-      files.push({ name: `assets/${a.file}`, data: fs.readFileSync(path.join(canvasDir, 'assets', 'images', a.file)) });
-    }
+    for (const [file, p] of usedFiles) files.push({ name: `assets/${file}`, data: fs.readFileSync(p) });
   }
   const frameNames = frames.map((f) => f.id);
   if (files.length === 1 && inline) return { filename: files[0].name, data: files[0].data, mime: 'text/html; charset=utf-8', fonts, warnings, frames: frameNames };

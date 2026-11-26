@@ -142,7 +142,7 @@ export const ProtoActionSchema: z.ZodType<ProtoAction> = z.lazy(() =>
     z.object({ do: z.literal('toggle'), var: varName }).strict(),
     z.object({ do: z.literal('countdown'), var: varName, from: z.number().int().min(1).max(3600), interval: z.number().int().min(50).max(60_000).optional(), then: z.array(ProtoActionSchema).max(20).optional() }).strict(),
     z.object({ do: z.literal('stop'), var: varName }).strict(),
-    z.object({ do: z.literal('navigate'), frame: z.string().max(64) }).strict(),
+    z.object({ do: z.literal('navigate'), frame: z.string().max(64), canvas: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/).optional() }).strict(),
     z.object({ do: z.literal('back') }).strict(),
     z.object({ do: z.literal('open'), url: z.string().max(2000) }).strict(),
     z.object({ do: z.literal('delay'), ms: z.number().int().min(0).max(600_000), then: z.array(ProtoActionSchema).max(20) }).strict(),

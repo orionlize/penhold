@@ -43,13 +43,14 @@ Runtime data lives in `~/.penhold` (`DESIGN_MCP_HOME`).
 - `designSystem.ts`, `designLint.ts`, `lintFix.ts` (the safe auto-fixes behind `design_lint_fix`).
 - `jsx.ts`: the JSX spelling of nodes used by `node_insert` / `node_replace` / `design_read`. It parses to Node JSON and never executes code.
 - `mermaid.ts`: parses and lays out the Mermaid flowchart subset used by `design_annotate`'s `flow`.
+- `links.ts`: link targets, both same-canvas `#<frameId>` and cross-canvas `#<canvasId>/<frameId>`, plus `refCards`, the layout of read-only cards for linked pages on older canvases.
 
 The source of truth is the abstract node tree with stable ids; HTML is only a view of it.
 
 **Screenshots happen in the browser:** `design_screenshot` sends a `shot` or `probe` message over WS to the open canvas page, which renders and checks inside iframes (`web/src/lib/frames.ts`, `web/src/editor/Viewport.tsx`) and replies with a PNG plus a report. Write tools wait for a canvas page to connect (`DESIGN_MCP_BROWSER_TIMEOUT_MS`).
 
 **MCP surface:** all tools and the server instructions live in `src/server/mcp.ts`. `daemon.ts`, `paths.ts` and `browser.ts` sit beside it, and the rest of `src/server/` is grouped by area:
-- `canvas/`: the document engine (`canvas.ts`), the canvas registry, annotations and asset storage.
+- `canvas/`: the document engine (`canvas.ts`), the canvas registry, annotations and asset storage. It also holds `project.ts`, which covers several canvases in one project: the page index, cross-canvas link checks, and copy-on-write of pages from older canvases.
 - `design/`: everything that supplies design direction, namely the questionnaire (`brief.ts`), direction cards, product-type presets (data in `guides/catalog.json`), local guide discovery, page-type snippets (`guides/pages/`), design systems and their API, font detection and Openverse image search.
 - `export/`: HTML and zip export.
 

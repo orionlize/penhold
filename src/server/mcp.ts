@@ -39,10 +39,12 @@ import { applyAnnotations } from './canvas/annotate.js';
 import { ingestSrc } from './canvas/assets.js';
 import { hitThumbnail, ImageSearchError, searchImages } from './design/images.js';
 import { Canvas, CanvasError } from './canvas/canvas.js';
+import { refCards } from '../core/links.js';
+import { copyFrameOps, crossLinkWarnings, foreignFrame, projectIndex } from './canvas/project.js';
 import { buildExport } from './export/export.js';
 import { decodePng, diffBitmaps } from './pixelDiff.js';
 import { findDesignGuides } from './design/guides.js';
-import { directionDetail, directionExample, recentUsage, suggestDirections, systemFromDirection, type DirectionCard } from './design/directions.js';
+import { archetypeOfCard, directionDetail, directionExample, recentUsage, suggestDirections, systemFromDirection, type DirectionCard } from './design/directions.js';
 import {
   applyPatch,
   auditContrast,
@@ -58,7 +60,7 @@ import {
 } from '../core/designSystem.js';
 import { defaultSystem, exportSystem, listSystems, loadSystem, newSystemId, PROJECT_DIR_NAME, saveSystem, setDefaultSystem, summary as systemSummary } from './design/systems.js';
 import { pageGuides } from './design/pageGuides.js';
-import { COLOR_Q, colorSchemes, customBriefForm, defaultBriefForm, DIRECTION_Q, directionQuestion } from './design/brief.js';
+import { COLOR_Q, colorSchemes, customBriefForm, defaultBriefForm, DIRECTION_Q, directionQuestion, TONE_Q, toneModes } from './design/brief.js';
 import { catalog, DEFAULT_GUIDE, defaultGuideText, matchPresets, presetDetail, presetSource } from './design/presets.js';
 import { VERSION } from './paths.js';
 import type { Registry } from './canvas/registry.js';
@@ -112,7 +114,7 @@ const PROTO_GUIDE = `交互（proto）：让设计稿在画布“播放”里能
   · {do:"set", var, value} 设为字面量；{do:"set", var, expr} 设为表达式结果；{do:"toggle", var} 布尔取反。
   · {do:"countdown", var, from:60, interval?:1000, then?:[…]}：var 设为 from 后每 interval 毫秒减 1，到 0 停止并执行 then；{do:"stop", var} 中止。
   · {do:"delay", ms, then:[…]} 延时执行；{do:"if", when, then?:[…], else?:[…]} 条件分支。
-  · {do:"navigate", frame:"<画板id>"}；{do:"back"}；{do:"open", url}。简单跳转也可写 props.href："#<画板id>" / "#back" / http(s) 链接。
+  · {do:"navigate", frame:"<画板id>"}（跳到同项目另一个画布的页面再加 canvas:"<画布id>"）；{do:"back"}；{do:"open", url}。简单跳转也可写 props.href："#<画板id>" / "#<画布id>/<画板id>"（跨画布）/ "#back" / http(s) 链接。
 - 页面内的状态切换（tab、开关、展开、倒计时、弹窗、校验提示）用变量 + show/styles 在一个画板内实现，不要为每个状态复制一个画板；所有状态的元素都要画出来，画布与截图显示初始状态。跨页面才用 navigate。
 - 组件内节点的 proto 属于组件定义，所有实例共享；实例根上的 proto（如每个 tab 实例各自的 onClick 与 styles）可逐实例不同。
 示例（画板根 proto.vars {"tab":"pwd","phone":"","sec":0}）：
@@ -127,7 +129,7 @@ const INSTRUCTIONS = `penhold-mcp 是本地设计画布。用户只能在画布�
 1. canvas_open（上下文里已有 canvas_id 时务必传入）。
 2. 问清需求与偏好：返回 needs_brief:true 时，在选设计方向、建设计系统、设令牌或绘制之前必须先问用户（服务端会拒绝这些调用）：design_ask() 在画布上出问卷。answered → 按回答设计；waiting → 请用户去画布填写并再次 design_ask()，期间不要绘制；skipped → 由你决定。用户已在对话里说清产品与页面内容时，在 design_plan 里用 enough_info 复述，问卷随后只问视觉偏好；只有用户亲口说过视觉偏好（风格、颜色、明暗或参考产品）时，才同时传 user_style 原样转述，跳过问卷。续改同一画布不必再问。
 3. design_plan：需求明确后立即声明本轮全部页面（单页也一样），早于阅读规范和 tokens_set，画布随即显示骨架屏。之后用返回的 frame_id 逐页绘制，不要再 frame_create 这些页面；计划有变时再调用一次。
-4. 定设计依据：项目有设计系统（canvas_open / design_plan 返回 design_system）时，它就是依据：先读它的 README，令牌、文字样式（text_styles）、组件与视觉基础照它执行，不再选方向卡片；首次写入时自动安装。否则用读文件工具完整阅读 canvas_open 返回的 design_guides（及其引用的同目录文件），令牌、组件与版式以它为准；与用户要求冲突时以用户为准。只有内置规范（kind:"builtin"）时，还要从 design_plan 返回的 design_directions 里选一张方向卡片（没有明显更合适的就选与常规解不同的那张），调用 design_direction({pick, concept, motif})（motif 是从题材里取的具体的物或形状；色板不贴题材时再传 primary 重算），再 design_system({action:"create", name}) 把它存成项目的设计系统（亮 / 暗主题、字阶、文字样式、间距、品牌手册）并安装，不要退回你惯用的默认配色与版式。项目里已有样式代码（CSS 变量、shadcn / Tailwind 主题）时改用 design_system({action:"import", path}) 从代码导入，精确取值。需要照片而用户没给素材时用 design_image 找图，每个图位用不同的图片。画布已记录 design_direction / design_preset 时沿用，不另起一套。design_plan 返回的 page_guides 列出该类页面的构图方案与平庸写法：选一个方案（不要默认第一个），避开平庸写法。
+4. 定设计依据：项目有设计系统（canvas_open / design_plan 返回 design_system）时，它就是依据：先读它的 README，令牌、文字样式（text_styles）、组件与视觉基础照它执行，不再选方向卡片；首次写入时自动安装。否则用读文件工具完整阅读 canvas_open 返回的 design_guides（及其引用的同目录文件），令牌、组件与版式以它为准；与用户要求冲突时以用户为准。只有内置规范（kind:"builtin"）时，还要从 design_plan 返回的 design_directions 里选一张方向卡片（没有明显更合适的就选与常规解不同的那张），调用 design_direction({pick, concept, motif})（motif 是从题材里取的具体的物或形状；色板不贴题材时再传 primary 重算），再 design_system({action:"create", name}) 把它存成项目的设计系统（颜色主题、字阶、文字样式、间距、品牌手册；用户没选风格时附带几种备选风格，在 Tweaks 面板切换）并安装，不要退回你惯用的默认配色与版式。项目里已有样式代码（CSS 变量、shadcn / Tailwind 主题）时改用 design_system({action:"import", path}) 从代码导入，精确取值。需要照片而用户没给素材时用 design_image 找图，每个图位用不同的图片。画布已记录 design_direction / design_preset 时沿用，不另起一套。design_plan 返回的 page_guides 列出该类页面的构图方案与平庸写法：选一个方案（不要默认第一个），避开平庸写法。
 5. 绘制：有设计系统时直接用它的令牌，文字按 text_styles 写 style，组件直接实例化；缺的令牌用 design_system({action:"update"}) 加进系统，而不是只在画布里 tokens_set（没有系统时才用 tokens_set 定义令牌）；画好的按钮、输入框、列表项等用 design_system({action:"save_components"}) 存进系统；node_update(node_id=frame_id) 设置画板根的背景与 padding，node_insert 一次插入整块区域（jsx 写法比 nodes 短），可复用块填 component；改已有区块用 design_read(format:"jsx") 读出、改写后 node_replace 传回。写工具可带 note（如“登录表单”），显示在画布的 AI 光标旁。
    - 只画界面内容：不画状态栏、刘海、Home 指示条、手机边框、浏览器地址栏、系统键盘，也不预留安全区（导航栏贴画板顶部，底部 tab 栏 / 按钮贴画板底部）。
    - 画板高度保持 auto：画布显示整页内容，便于检查。播放预览时画板按设备屏幕高度显示（手机 844、平板宽的 4/3、桌面宽的 10/16；固定高度的画板用它自己的高度），内容超出时在屏幕内滚动。要在滚动时固定在屏幕上的顶部导航栏写 layout {position:"sticky", top:0, zIndex:10}，底部 tab 栏 / 操作栏写 {position:"sticky", bottom:0, zIndex:10}，并给它们背景色。不要为此把画板改成固定高度，也不要自己包一层滚动容器。
@@ -138,10 +140,11 @@ const INSTRUCTIONS = `penhold-mcp 是本地设计画布。用户只能在画布�
    - 需要随导出交付时，另画一个“业务流程与说明”画板（宽 1440，在 design_plan 中一起声明，通常排最前）：主流程图（每步一个卡片，props.href "#<画板id>" 链到对应页面，分支与异常路径单独标出）、各页说明、业务规则、交互状态清单；与 UI 画板共用令牌，同样要自检。
    说明不要画进 UI 画板；页面改动后同步更新或删除过时的说明（canvas_status 的 ai_annotations 列出你写过的批注）。
 
+新一轮迭代：已有画布上的页面基本定稿、这轮要画一批新页面时，canvas_open({new:true, title:"<本轮主题>"}) 另开一个画布（同项目共用设计系统，不必再问偏好），本画布只放新页面，避免单个画布越画越大、读取越来越慢。canvas_open 返回的 project_canvases 列出旧画布的页面：新页面跳到旧页面用跨画布链接，需要看旧页面时 design_outline / design_read 传 canvas_id 只读查看，旧页面要改时 frame_create({from:{canvas_id, frame_id}}) 复制到新画布再改，不要回旧画布改。只是修改已有页面时继续用原画布。
 续改：用户说“我选中的…”时用 canvas_status 取选区，并先看其中的用户评论；改前用 design_changes(since_rev, origin:"user") 查看用户的手动改动，避免覆盖。按评论改完并 design_screenshot 自检、逐条确认已改好后，用 design_annotate({resolve:[评论编号]}) 关闭这些评论；没改或拿不准的评论保留，并向用户说明原因。
 转代码：design_outline 看结构 → design_screenshot 作视觉基准 → 按组件逐个 design_read，并按 proto 实现状态与事件处理。`;
 
-const navText = (n: NavOut) => (n.kind === 'navigate' ? `跳到画板 ${n.frame}` : n.kind === 'back' ? '返回上一页' : `打开 ${n.url}`);
+const navText = (n: NavOut) => (n.kind === 'navigate' ? (n.canvas ? `跳到画布 ${n.canvas} 的画板 ${n.frame}` : `跳到画板 ${n.frame}`) : n.kind === 'back' ? '返回上一页' : `打开 ${n.url}`);
 const pathText = (path: Step[]) => path.map((p) => p.label).join(' → ');
 const fmtVars = (v: Record<string, ProtoValue>) => JSON.stringify(v).slice(0, 160);
 
@@ -444,9 +447,25 @@ function formatReport(target: string, r: ShotReport, brief = false): string {
   return lines.join('\n');
 }
 
+/** 设计系统的主题在 Tweaks 面板里提供哪些切换，告诉 AI 用户能换什么。 */
+function tweaksOf(ds: DesignSystem): Json {
+  const th = ds.color.themes;
+  const names = (xs: Array<string | undefined>) => [...new Set(xs.filter((x): x is string => !!x))];
+  const styles = names(th.map((t) => t.style));
+  const schemes = names(th.map((t) => t.scheme));
+  const modes = th.some((a) => th.some((b) => b.style === a.style && b.scheme === a.scheme && b.mode !== a.mode));
+  const parts = [styles.length > 1 && `风格（${styles.join(' / ')}）`, schemes.length > 1 && `配色（${schemes.join(' / ')}）`, modes && '明暗'].filter(Boolean);
+  return parts.length ? { tweaks_themes: `用户可在画布的 Tweaks 面板里切换${parts.join('、')}。画布上只按默认主题画，颜色、字体、圆角、阴影一律引用令牌，切换才会生效。` } : {};
+}
+
 export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
   const server = new McpServer({ name: 'penhold-mcp', version: VERSION }, { instructions: INSTRUCTIONS });
 
+  /** 只读打开同一项目里的另一个画布（旧迭代）：不绑定、不持锁。 */
+  const peek = (id: string): Canvas => {
+    if (!hub.exists(id)) throw new CanvasError(`画布 ${id} 不存在`, 'not_found');
+    return hub.get(id);
+  };
   const bound = (): Canvas => {
     if (ctx.canvasId) {
       const c = hub.get(ctx.canvasId);
@@ -463,6 +482,25 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
     throw new CanvasError('尚未绑定画布，请先调用 canvas_open', 'unbound');
   };
 
+  /** 同项目其他画布的页面索引：新页面链接旧页面时用，不必把旧页面画进本画布。 */
+  const projectInfo = (c: Canvas): Json => {
+    const others = projectIndex(hub, c.meta.cwd, c.id);
+    if (!others.length) return {};
+    return {
+      project_canvases: others,
+      project_canvases_hint:
+        '同一项目的其他画布（之前的迭代）。本画布只放本轮的新页面：跳到旧页面用跨画布链接 props.href "#<canvas_id>/<页面id>" 或 {do:"navigate", canvas, frame}；要看旧页面的结构用 design_outline / design_read 传 canvas_id（只读）；旧页面需要改动时用 frame_create({from:{canvas_id, frame_id}}) 复制到本画布再改，旧画布保持不变。',
+    };
+  };
+  /** 画布上的引用卡片及其页面名称（流程图与箭头可以指向它们）。 */
+  const namedRefs = (c: Canvas) =>
+    refCards(c.doc).map((r) => {
+      let name = r.frame;
+      try {
+        name = hub.exists(r.canvas) ? (hub.get(r.canvas).doc.frames.find((f) => f.id === r.frame)?.name ?? r.frame) : r.frame;
+      } catch {}
+      return { ...r, name };
+    });
   const canvasInfo = (c: Canvas, brief?: string): Json => ({
     canvas_id: c.id,
     url: hub.url(c.id),
@@ -476,6 +514,7 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
     ...(c.doc.tweaks?.length ? { tweaks: c.doc.tweaks } : {}),
     selection: c.ui.selection,
     pending_check: [...c.pendingCheck],
+    ...projectInfo(c),
     ...guidesInfo(c, brief),
     ...(() => {
       const s = systemOf(c);
@@ -499,8 +538,34 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
       .map((r) => r.canvas_id)
       .filter((id) => id !== c.id);
     const used = recentUsage(others);
-    return suggestDirections({ brief, avoidColors: used.colors, avoidArchetypes: used.archetypes });
+    const cards = suggestDirections({ brief, avoidColors: used.colors, avoidArchetypes: used.archetypes });
+    // 记下最近几批：用户没选风格时，AI 选中的那张所在批次的其余卡片成为 Tweaks 里的备选风格
+    if (cards.length) {
+      c.meta.offered = [cards.map((x) => x.id), ...(c.meta.offered ?? [])].slice(0, 4);
+      c.saveMeta();
+    }
+    return cards;
   };
+  /** 用户在问卷里选过视觉方向，或在对话里亲口说过视觉偏好（design_plan 的 user_style）。 */
+  const userChoseStyle = (c: Canvas) => !!c.meta.brief?.answers.some((a) => a.id === DIRECTION_Q || a.id === 'style');
+  /** 备选风格：与选中卡片同一批、原型不同的其余卡片，不足两张时另抽补齐。 */
+  const alternatesFor = (c: Canvas, pick: string): string[] => {
+    const arch = (id: string) => archetypeOfCard(id)?.id;
+    const used = new Set([arch(pick)]);
+    const out: string[] = [];
+    const add = (id: string) => {
+      const a = arch(id);
+      if (a && !used.has(a) && out.length < 2) {
+        used.add(a);
+        out.push(id);
+      }
+    };
+    for (const id of c.meta.offered?.find((b) => b.includes(pick)) ?? []) add(id);
+    if (out.length < 2) for (const x of suggestDirections({ brief: briefOf(c), avoidArchetypes: [...used].filter((a): a is string => !!a), count: 4 })) add(x.id);
+    return out;
+  };
+  const STYLE_TWEAKS_HINT =
+    '用户没有选定视觉方向：你选的方向之外，同一批卡片里的另外两个方向会在 design_system({action:"create"}) 时一并生成为备选风格（颜色、字体、圆角、阴影），用户画好后在 Tweaks 面板里切换比较。画布上只按你选的方向画，颜色、字体、圆角、阴影一律引用令牌，不要写死，否则切换风格不生效。';
   /** 画布还没有任何设计依据（本地规范、已选方向 / 预设、已有令牌）。 */
   const needsDirection = (c: Canvas) =>
     !c.meta.system && !c.meta.direction && !c.meta.preset && !c.doc.tokens['color.primary'] && !findDesignGuides(ctx.cwd, ctx.envGuides).length && !defaultSystem(c.meta.cwd);
@@ -542,7 +607,12 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
   /** 返回给 AI 的系统说明：先读 README，文字样式的写法直接给出。 */
   const systemInfo = (c: Canvas, ds: DesignSystem, installed: boolean): Json => {
     const bad = auditContrast(ds);
+    const cur = installed && c.meta.system ? ds.color.themes.find((t) => t.id === c.meta.system!.theme) : undefined;
+    const switched = cur?.style && cur.style !== ds.color.themes[0]?.style ? cur.style : undefined;
     return {
+      ...(switched
+        ? { style_switched: `用户在 Tweaks 面板里把风格换成了「${switched}」（主题 ${cur!.id}）：画布令牌已是该风格的值，后续绘制沿用当前令牌，形状与气质向这个风格靠拢；README 的“视觉基础”写的是默认风格。` }
+        : {}),
       design_system: {
         ...systemSummary(ds, c.meta.cwd),
         page: `${hub.url()}s/${ds.id}`,
@@ -591,7 +661,9 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
     const rec = c.meta.brief!;
     const d = c.meta.direction ? directionDetail(c.meta.direction.id, briefOf(c), c.meta.direction.primary) : undefined;
     const cards = needsDirection(c) ? directionCards(c, briefOf(c)) : [];
+    const styleHint = !d && !userChoseStyle(c) && cards.length ? { style_tweaks_hint: STYLE_TWEAKS_HINT } : {};
     const rest = {
+      ...styleHint,
       ...(d ? { direction: d } : {}),
       ...(d && !c.meta.direction?.motif ? { motif_missing: MOTIF_HINT } : {}),
       ...(d ? exampleOf(d.id) : {}),
@@ -610,7 +682,7 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
         '以上是用户的回答，优先级高于设计方向卡片与内置规范；没有回答的题目由你决定。' +
         (d ? '用户选定了视觉方向（direction，已记到画布）：把 direction.tokens 传给 tokens_set，signature 要在页面里画出来；用户另外指定了主色或明暗时，按用户的调整令牌。' : '') +
         (colorSchemes(rec.answers.find((a) => a.id === COLOR_Q)?.answer).length > 1
-          ? '用户多选了主色：design_system({action:"create"}) 会为每种主色各生成一套亮 / 暗主题，用户在 Tweaks 面板里切换比较；design_direction 的 primary 传第一种主色，画布上只按默认配色画，颜色一律引用令牌，不要写死色值。'
+          ? '用户多选了主色：design_system({action:"create"}) 会为每种主色各生成一套配色主题，用户在 Tweaks 面板里切换比较；design_direction 的 primary 传第一种主色，画布上只按默认配色画，颜色一律引用令牌，不要写死色值。'
           : '') +
         '页面内容按用户勾选和填写的来，不要擅自增删。现在调用 design_plan 并开始设计。',
       ...rest,
@@ -658,22 +730,23 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
       const tx = c.commit('ai', ops, { session: ctx.id, note });
       const planned = c.planOutstanding();
       const warnings = lintProto(c.doc, c.pendingCheck);
+      const xlinks = crossLinkWarnings(hub, c.doc, c.pendingCheck);
       return ok({
         rev: tx.rev,
         affected: fmtAffected(affected),
         needs_check: true,
         pending_check: [...c.pendingCheck],
         ...(planned.length ? { planned_not_started: planned } : {}),
-        ...(warnings.length ? { proto_warnings: warnings.slice(0, 10).map((w) => `${w.id}：${w.detail}`) } : {}),
+        ...(warnings.length || xlinks.length ? { proto_warnings: [...warnings.map((w) => `${w.id}：${w.detail}`), ...xlinks].slice(0, 10) } : {}),
         ...extra,
       });
     } catch (e) {
       return fail(e);
     }
   };
-  const read = async (fn: (c: Canvas) => Promise<CallToolResult | Json> | CallToolResult | Json): Promise<CallToolResult> => {
+  const read = async (fn: (c: Canvas) => Promise<CallToolResult | Json> | CallToolResult | Json, other?: string): Promise<CallToolResult> => {
     try {
-      const r = await fn(bound());
+      const r = await fn(other && other !== ctx.canvasId ? peek(other) : bound());
       return 'content' in r ? (r as CallToolResult) : ok(r);
     } catch (e) {
       return fail(e);
@@ -687,7 +760,7 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
     {
       title: '打开画布',
       description:
-        '绑定或恢复画布并在浏览器打开。返回 canvas_id、URL、rev、画板、已用类型名、组件、令牌，以及设计规范文件路径（design_guides，绘制前先阅读）。上下文中已有 canvas_id 时务必传入；一个会话只能编辑一个画布。返回 status:"choose" 时请用户选择继续某个画布（传 canvas_id）或新建（new:true）。',
+        '绑定或恢复画布并在浏览器打开。返回 canvas_id、URL、rev、画板、已用类型名、组件、令牌、同项目其他画布的页面索引（project_canvases），以及设计规范文件路径（design_guides，绘制前先阅读）。上下文中已有 canvas_id 时务必传入。同一时间只绑定一个画布：传另一个 canvas_id 或 new:true 会换画布（新一轮迭代另开画布），当前画布要先自检完。返回 status:"choose" 时请用户选择继续某个画布（传 canvas_id）或新建（new:true）。',
       inputSchema: {
         canvas_id: z.string().optional().describe('要恢复的画布 id'),
         new: z.boolean().optional().describe('强制新建画布'),
@@ -698,10 +771,27 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
     async (args) => {
       try {
         if (args.brief) ctx.brief = args.brief;
+        let switched: Json | undefined;
+        if (ctx.canvasId && ((args.canvas_id && args.canvas_id !== ctx.canvasId) || args.new)) {
+          // 换画布（如新一轮迭代另开画布）：同一时间只绑定一个画布，当前画布要先自检完
+          if (args.canvas_id && !hub.exists(args.canvas_id)) throw new CanvasError(`画布 ${args.canvas_id} 不存在`, 'not_found');
+          const prev = hub.get(ctx.canvasId);
+          const mine = prev.lock?.session === ctx.id;
+          if (mine && (prev.pendingCheck.size || prev.planOutstanding().length))
+            throw new CanvasError(
+              `当前画布 ${prev.id}（${prev.meta.title}）还有改动没完成自检${prev.pendingCheck.size ? `（${[...prev.pendingCheck].join(', ')}）` : ''}${prev.planOutstanding().length ? `，规划的页面 ${prev.planOutstanding().join(', ')} 还没画` : ''}：先 design_screenshot 自检完，再换画布`,
+              'needs_check',
+            );
+          if (mine) prev.releaseLock('checked');
+          else prev.dropSuspended(ctx.id);
+          const notes = mine || prev.aiFrames.size ? framesMissingNotes(prev) : [];
+          switched = {
+            previous_canvas: { canvas_id: prev.id, title: prev.meta.title },
+            ...(notes.length ? { previous_missing_notes: `上一个画布还有 ${notes.length} 个画板缺流程说明（${notes.map((n) => n.name).join('、')}），需要时 canvas_open 切回去补` } : {}),
+          };
+          ctx.canvasId = undefined;
+        }
         if (ctx.canvasId) {
-          if (args.canvas_id && args.canvas_id !== ctx.canvasId)
-            throw new CanvasError(`本会话已绑定画布 ${ctx.canvasId}，一个会话只能编辑一个画布`, 'bound');
-          if (args.new) throw new CanvasError(`本会话已绑定画布 ${ctx.canvasId}，不能再新建`, 'bound');
           const c = hub.get(ctx.canvasId);
           if (!c.clients.size) hub.ensureBrowser(c, 1).catch(() => {});
           return ok(canvasInfo(c, args.brief));
@@ -724,7 +814,7 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
         ctx.canvasId = c.id;
         if (host) hub.addAlias(host, c.id);
         if (!c.clients.size) hub.ensureBrowser(c, 1).catch(() => {});
-        return ok(canvasInfo(c, args.brief));
+        return ok({ ...canvasInfo(c, args.brief), ...switched });
       } catch (e) {
         return fail(e);
       }
@@ -813,9 +903,19 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
             const prev = c.meta.direction?.id === d.id ? c.meta.direction : undefined;
             const concept = args.concept ?? prev?.concept;
             const motif = args.motif ?? prev?.motif;
-            c.meta.direction = { id: d.id, name: d.name, signature: d.signature, ...(concept ? { concept } : {}), ...(motif ? { motif } : {}), ...(primary ? { primary } : {}) };
+            const alternates = userChoseStyle(c) ? [] : (prev?.alternates ?? alternatesFor(c, d.id));
+            c.meta.direction = {
+              id: d.id,
+              name: d.name,
+              signature: d.signature,
+              ...(concept ? { concept } : {}),
+              ...(motif ? { motif } : {}),
+              ...(primary ? { primary } : {}),
+              ...(alternates.length ? { alternates } : {}),
+            };
             c.saveMeta();
           }
+          const alts = c?.meta.direction?.alternates ?? [];
           const motif = args.motif ?? (c?.meta.direction?.id === d.id ? c.meta.direction.motif : undefined);
           return ok({
             ...d,
@@ -823,8 +923,14 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
             ...exampleOf(d.id),
             recorded: !!c,
             ...(c ? {} : { note: '尚未绑定画布，未记录；canvas_open 后再调用一次' }),
+            ...(alts.length
+              ? {
+                  alternate_styles: alts.map((id) => archetypeOfCard(id)?.name.split(' · ')[0] ?? id),
+                  alternate_styles_hint: '用户没有在问卷里选定风格：design_system create 时会把这几个方向一并生成为备选风格，用户在 Tweaks 面板切换。你只按选中的方向画，颜色、字体、圆角、阴影一律引用令牌。',
+                }
+              : {}),
             next_step:
-              '把这个方向存成项目的设计系统：调用 design_system({action:"create", name:"<产品名>"})。它按本方向生成完整的小系统（亮 / 暗两套颜色、按原型密度的字阶与文字样式、间距、圆角、阴影、品牌说明），修正对比度后写入 README 并安装到画布，同项目后续画布自动沿用。不需要再手动 tokens_set。',
+              '把这个方向存成项目的设计系统：调用 design_system({action:"create", name:"<产品名>"})。它按本方向生成完整的小系统（颜色主题、按原型密度的字阶与文字样式、间距、圆角、阴影、品牌说明），修正对比度后写入 README 并安装到画布，同项目后续画布自动沿用。不需要再手动 tokens_set。明暗按用户在问卷里的回答，没回答时只生成方向本身的一种，不默认附带亮 / 暗两套；用户要两种都看时传 modes:["light","dark"]。',
             hint: '（不建系统时）tokens 可直接传给 tokens_set，再按内置规范第 5 节补上字号（size.*）与间距（space.*）令牌。font.* 已按本机安装的字体生成，直接使用，不要换成本机没有的字体；字重与字号按 typography 执行。signature 是构图手法，motif 是它画的内容：两者合起来的记忆点要在每个页面里真正画出来，shape 与 layout 全稿保持一致，avoid 列出的做法不要出现。用户指定了颜色或风格时，对应部分以用户为准。',
           });
         }
@@ -841,7 +947,7 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
     {
       title: '设计系统',
       description:
-        '项目级设计系统（参照 Claude Design）：颜色按亮 / 暗主题各存一值并写明用途，文字是字号 + 行高 + 字重 + 字体的组合样式，另有间距、圆角、阴影、组件与品牌手册 README。系统与画布分开保存，同一项目的画布共用默认系统，新画布首次写入时自动安装。' +
+        '项目级设计系统（参照 Claude Design）：颜色按主题（明暗、配色或风格）各存一值并写明用途，文字是字号 + 行高 + 字重 + 字体的组合样式，另有间距、圆角、阴影、组件与品牌手册 README。系统与画布分开保存，同一项目的画布共用默认系统，新画布首次写入时自动安装。' +
         'action：get（默认，当前画布或项目的系统与 README 路径）、list（本机全部系统）、create（from:"direction" 由已选方向卡片生成小而完整的系统，"canvas" 由画布现有令牌整理，"preset" 由已选内置预设；保存、设为项目默认并安装到画布）、' +
         'import（path 指向 CSS 文件读取其中的 CSS 变量，含 .dark / prefers-color-scheme 暗色块；或 Claude Design 的 tokens.json / 导出的 system.json）、install（id 缺省为项目默认；theme 选主题）、theme（切换画布主题）、update（patch 按名字合并修改，所有安装了它的画布在下次 install 时更新，当前画布立即更新）、' +
         'save_components（names：把画布里画好的组件存进系统，后续画布直接实例化）、export（写到项目目录 design-system/，提交进仓库后其他机器自动发现）、audit（各主题的对比度与结构检查）。',
@@ -857,7 +963,17 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
           .array(z.object({ name: z.string().min(1).max(12), primary: z.string().regex(/^#[0-9a-fA-F]{6}$/, '写成 #RRGGBB') }))
           .max(4)
           .optional()
-          .describe('create（from:"direction"）：多套配色，每套一个主色，各生成亮 / 暗主题，用户在 Tweaks 面板切换。缺省取需求问卷里用户多选的主色；用户在对话里说了几种颜色都想看时传入。第一套是默认配色'),
+          .describe('create（from:"direction"）：多套配色，每套一个主色，各生成一套主题（明暗同 modes），用户在 Tweaks 面板切换。缺省取需求问卷里用户多选的主色；用户在对话里说了几种颜色都想看时传入。第一套是默认配色'),
+        modes: z
+          .array(z.enum(['light', 'dark']))
+          .min(1)
+          .max(2)
+          .optional()
+          .describe('create（from:"direction"）：生成哪几种明暗。缺省按问卷的明暗回答，没回答时只生成方向本身的一种（不默认带亮 / 暗两套）；用户在对话里要深色、浅色或两种都要时传入'),
+        styles: z
+          .boolean()
+          .optional()
+          .describe('create（from:"direction"）：是否附带备选风格。用户没在问卷里选定风格时缺省 true（同一批方向卡片里的其余方向，用户在 Tweaks 面板切换）；用户在对话里明确只要这一种风格时传 false'),
         names: z.array(z.string().max(60)).max(40).optional().describe('save_components：组件名'),
         usage: z.record(z.string(), z.string().max(200)).optional().describe('save_components：组件名 → 一句用法说明'),
         patch: z
@@ -880,7 +996,7 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
               .array(z.object({ id: z.string().regex(/^[a-z][a-z0-9-]{0,23}$/), name: z.string().max(24), scheme: z.string().max(24).optional(), mode: z.enum(['light', 'dark']).optional(), swatch: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional() }))
               .max(12)
               .optional()
-              .describe('新增主题。另一套配色：同一 scheme（配色名）各给 mode 为 light / dark 的两个主题，Tweaks 面板按“配色 × 明暗”切换'),
+              .describe('新增主题。另一套配色：给主题写同一个 scheme（配色名），有几种明暗就各给一个 mode，Tweaks 面板按“配色 × 明暗”切换'),
             families: z.record(z.string().regex(/^[a-z][a-z0-9-]{0,23}$/), z.string().max(300).nullable()).optional(),
             scale: z.record(z.string().regex(/^[a-z0-9]{1,6}$/), z.number().min(6).max(200).nullable()).optional(),
             styles: z
@@ -974,7 +1090,22 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
               // 方向没指定主色时，第一套配色就是默认配色
               const primary = args.schemes ? schemes[0]?.primary : (dir.primary ?? schemes[0]?.primary);
               const main = schemes.find((s) => s.primary.toUpperCase() === primary?.toUpperCase());
-              ds = systemFromDirection(dir.id, { id, name, device: deviceOf(), brief: briefOf(c!), primary, concept: dir.concept, motif: dir.motif, schemes: schemes.filter((s) => s !== main), ...(main ? { schemeName: main.name } : {}) });
+              const modes = args.modes ?? toneModes(c!.meta.brief?.answers.find((a) => a.id === TONE_Q)?.answer);
+              const alts = args.styles === false ? [] : (dir.alternates ?? []);
+              ds = systemFromDirection(dir.id, {
+                id,
+                name,
+                device: deviceOf(),
+                brief: briefOf(c!),
+                primary,
+                concept: dir.concept,
+                motif: dir.motif,
+                schemes: schemes.filter((s) => s !== main),
+                ...(main ? { schemeName: main.name } : {}),
+                ...(modes ? { modes } : {}),
+                // 用户指定过主色时，备选风格也用同样的配色
+                ...(alts.length ? { styles: { cards: alts, ...(schemes.length && primary ? { primary } : {}) } } : {}),
+              });
             } else if (from === 'preset') {
               const pd = c?.meta.preset ? presetDetail(c.meta.preset) : undefined;
               if (!pd) throw new CanvasError('画布还没有选用内置预设：先 design_preset({id, use:true})', 'invalid');
@@ -985,7 +1116,7 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
             }
             if (!ds) throw new CanvasError('无法由该方向生成设计系统', 'invalid');
             if (reuse) ds = { ...ds, components: reuse.components, version: reuse.version, brand: { ...ds.brand, ...(reuse.brand.notes ? { notes: reuse.brand.notes } : {}) } };
-            return saveAndInstall(ds, `生成设计系统「${name}」`, reuse ? { replaced: `沿用原系统 id ${reuse.id}，版本 +1` } : {});
+            return saveAndInstall(ds, `生成设计系统「${name}」`, { ...(reuse ? { replaced: `沿用原系统 id ${reuse.id}，版本 +1` } : {}), ...tweaksOf(ds) });
           }
           case 'import': {
             if (!args.path) throw new CanvasError('import 需要 path：CSS 文件（读取 CSS 变量）或 tokens.json / system.json', 'invalid');
@@ -1191,9 +1322,11 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
       title: '画布状态',
       description:
         '返回画布是否在线、用户选区（节点 id、类型、组件名）、最新 rev、编辑锁状态、尚未自检的画板，以及用户留下的评论与批注（附所在画板与指向的节点 id）。续改前先看评论：它们是用户对设计的具体意见。你用 design_annotate 写的说明单独列在 ai_annotations。',
-      inputSchema: {},
+      inputSchema: {
+        ai_notes: z.enum(['brief', 'full']).optional().describe('你写过的说明批注：brief（默认）只给 id、所在画板与开头几个字；full 给全文与坐标'),
+      },
     },
-    async () =>
+    async (args) =>
       read((c) => {
         const idx = getIndex(c.doc);
         const selection = c.ui.selection.map((addr) => {
@@ -1221,7 +1354,7 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
                 ...(c.lock ? {} : { plan_hint: '编辑锁因空闲已释放，但规划的画板都还在：直接用这些 frame_id 继续 node_update / node_insert 即可接着画，不要重新 design_plan 或 frame_create。' }),
               }
             : {}),
-          ...summarizeNotes(c),
+          ...summarizeNotes(c, args.ai_notes === 'full'),
           ...(!c.pendingCheck.size && missingNotesHint(c) ? { missing_notes: missingNotesHint(c) } : {}),
           ...((): Json => {
             const n = c.takeRevertNotice();
@@ -1233,7 +1366,7 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
 
   const pointArg = z
     .union([z.tuple([z.number(), z.number()]), z.object({ frame: z.string().optional(), x: z.number(), y: z.number() })])
-    .describe('[x, y] 相对本条批注的 frame 左上角（无 frame 时为画布世界坐标）；跨画板时写 {frame, x, y}，坐标相对该画板');
+    .describe('[x, y] 相对本条批注的 frame 左上角（无 frame 时为画布世界坐标）；跨画板时写 {frame, x, y}，坐标相对该画板；frame 写 "<画布id>/<画板id>" 时相对画布上该旧页面的引用卡片（本画布链接过的旧画布页面）');
 
   server.registerTool(
     'design_annotate',
@@ -1273,7 +1406,7 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
             width: z.number().min(80).max(600).optional().describe('说明框宽度，缺省 200'),
           })
           .optional()
-          .describe('用 Mermaid 写流程，服务端排版：普通节点生成说明框（{判断} 为浅黄、(起止) 为浅绿），id 或文字等于画板 id / 名称的节点直接指向该画板；相邻画板间画横向箭头，不相邻的从画板上方绕行；-.-> 为虚线（异常 / 可选路径），|文字| 为连线标签。重画前先 remove 返回的 flow.ids 或 clear'),
+          .describe('用 Mermaid 写流程，服务端排版：普通节点生成说明框（{判断} 为浅黄、(起止) 为浅绿），id 或文字等于画板 id / 名称的节点直接指向该画板（本画布链接过的旧画布页面按名称指向画布上的引用卡片）；相邻画板间画横向箭头，不相邻的从画板上方绕行；-.-> 为虚线（异常 / 可选路径），|文字| 为连线标签。重画前先 remove 返回的 flow.ids 或 clear'),
       },
     },
     async (args) =>
@@ -1286,7 +1419,7 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
             for (const [id, sz] of Object.entries(sizes)) heights.set(id, Math.round(sz.height));
           }
         }
-        const r = applyAnnotations(c, args, heights);
+        const r = applyAnnotations(c, args, heights, namedRefs(c));
         if (!c.clients.size) hub.ensureBrowser(c, 1).catch(() => {});
         const missing = framesMissingNotes(c);
         if (args.resolve?.length && !args.add?.length && !args.remove?.length && args.clear === undefined) {
@@ -1402,16 +1535,38 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
       title: '新建画板',
       description: '新建画板（一个页面或一个组件稿），可同时给出根节点（含 children，Node 结构见 node_insert）。画板 id 同时是根节点 id，可作为 node_insert 的 parent_id。桌面端与移动端分别建画板。已在 design_plan 中声明的页面不要再建。',
       inputSchema: {
-        name: z.string().describe('如 “登录页 / 桌面端”'),
-        width: z.number().int().min(100).max(10000).describe('视口宽度，如 1440 / 390'),
+        name: z.string().optional().describe('如 “登录页 / 桌面端”（传 from 时可省略）'),
+        width: z.number().int().min(100).max(10000).optional().describe('视口宽度，如 1440 / 390（传 from 时可省略）'),
         height: z.union([z.number().int().min(100).max(100000), z.literal('auto')]).optional().describe('默认 auto'),
         root: nodeRef('根节点（不需要 id，type 缺省 page），用于设置背景、内边距、布局与初始子节点', true).optional(),
         index: z.number().int().min(0).optional(),
+        from: z
+          .object({ canvas_id: z.string(), frame_id: z.string() })
+          .optional()
+          .describe('写时复制：把同一项目另一个画布（旧迭代）的页面复制到本画布再改，旧画布不动。复制组件、图片与缺少的令牌；副本里指向旧画布其他页面的链接改成跨画布链接。传 from 时 width / root 被忽略，name 可选'),
         note: noteArg,
       },
     },
     async (args) =>
       write(async (c) => {
+        if (args.from) {
+          if (args.from.canvas_id === c.id) throw new CanvasError('from.canvas_id 是本画布；复制本画布的页面请用 design_read + frame_create');
+          const { canvas: src } = foreignFrame(hub, args.from.canvas_id, args.from.frame_id);
+          const r = copyFrameOps(src, args.from.frame_id, c, { name: args.name, index: args.index });
+          c.meta.basedOn = { ...c.meta.basedOn, [r.frameId]: { canvas: src.id, frame: args.from.frame_id, rev: src.doc.rev } };
+          c.saveMeta();
+          return {
+            ops: r.ops,
+            affected: [{ id: r.frameId, type: 'page' }],
+            extra: {
+              frame_id: r.frameId,
+              based_on: { canvas_id: src.id, frame_id: args.from.frame_id },
+              ...(r.notes.length ? { copy_notes: r.notes } : {}),
+              hint: '已复制到本画布，改这个副本；新页面要跳到它时链接 "#' + r.frameId + '"。旧画布里的原页面保持不变。',
+            },
+          };
+        }
+        if (!args.name || !args.width) throw new CanvasError('新建画板需要 name 与 width');
         const id = newId('f');
         const rootIn = validateNodeInput({ type: 'page', ...(args.root ?? {}) }, 'root');
         if (rootIn.component) throw new CanvasError('画板根节点不能是组件');
@@ -1420,7 +1575,7 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
         const prep = prepareNodes(c.doc, children ?? [], undefined);
         const root: Node = { ...(rest as Node), id };
         if (prep.nodes.length) root.children = prep.nodes;
-        const ops: Op[] = [...pre, ...prep.ops, { op: 'frame_create', index: args.index ?? c.doc.frames.length, frame: { id, name: args.name, width: args.width, height: args.height ?? 'auto', root } }];
+        const ops: Op[] = [...pre, ...prep.ops, { op: 'frame_create', index: args.index ?? c.doc.frames.length, frame: { id, name: args.name!, width: args.width!, height: args.height ?? 'auto', root } }];
         return { ops, affected: [{ id, type: root.type }, ...prep.affected], extra: { frame_id: id } };
       }, args.note),
   );
@@ -1742,8 +1897,8 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
       title: '设置可调节项（Tweaks）',
       description:
         '把设计令牌暴露成可随手调的控件，类似 Claude Design 的 Tweaks：用户在画布右侧“Tweaks”面板里拖滑块、取色、切换选项，直接改绑定的令牌；导出的 HTML 里也带一个浮动调节面板。整体替换现有列表，传空数组清除。' +
-        '每项 {id, label, token, kind}：color（取色，如主色 color.primary）、range（滑块，需 min/max，可选 step/unit，如 radius.md 取 0–24 单位 px）、select（options:[{label,value}]，如字体 font.heading 的几种字体栈）、toggle（options 恰好两项，第一项为“关”，如亮/暗背景）。' +
-        'token 必须已用 tokens_set 或设计系统定义；组件里要用 "{token}" 引用才会随之变化。挑 3–8 个最能改变整体气质的维度（主色、圆角、字体、密度、明暗），可用 group 分组。',
+        '每项 {id, label, token, kind}：color（取色，如主色 color.primary）、range（滑块，需 min/max，可选 step/unit，如 radius.md 取 0–24 单位 px）、select（options:[{label,value}]，如字体 font.heading 的几种字体栈）、toggle（options 恰好两项，第一项为“关”，如卡片阴影的有无）。' +
+        'token 必须已用 tokens_set 或设计系统定义；组件里要用 "{token}" 引用才会随之变化。挑 3–8 个最能改变整体气质的维度（主色、圆角、字体、密度），可用 group 分组。明暗、配色与风格的切换由设计系统的主题提供（Tweaks 面板自动显示），不要再用 toggle 做亮 / 暗背景。',
       inputSchema: {
         tweaks: z
           .array(
@@ -1781,6 +1936,7 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
         frame_id: z.string().optional(),
         node_id: z.string().optional(),
         depth: z.number().int().min(0).max(3).optional(),
+        canvas_id: z.string().optional().describe('可选：只读查看同一项目里另一个画布（canvas_open 返回的 project_canvases）'),
       },
     },
     async (args) =>
@@ -1806,7 +1962,7 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
         }
         const frame = c.doc.frames.find((f) => f.id === id);
         return { rev: c.doc.rev, ...(frame ? { frame: { id: frame.id, name: frame.name, width: frame.width, height: frame.height } } : {}), outline: out };
-      }),
+      }, args.canvas_id),
   );
 
   server.registerTool(
@@ -1821,10 +1977,12 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
         depth: z.number().int().min(0).max(10).optional().describe('默认 3'),
         include_hidden: z.boolean().optional(),
         format: z.enum(['json', 'jsx']).optional().describe('默认 json'),
+        canvas_id: z.string().optional().describe('可选：只读读取同一项目里另一个画布的节点（不返回实测尺寸）'),
       },
     },
     async (args) =>
       read(async (c) => {
+        const foreign = c.id !== ctx.canvasId;
         if (!!args.node_id === !!args.component) throw new CanvasError('node_id 与 component 必须二选一');
         const o: ReadOpts = { depth: args.depth ?? 3, includeHidden: !!args.include_hidden, components: new Set(), addrs: [] };
         const doc = c.doc;
@@ -1899,7 +2057,8 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
             }
           });
         if (Object.keys(assets).length) out.assets = assets;
-        if (measureAddrs.length) {
+        if (foreign) out.canvas_id = c.id;
+        if (measureAddrs.length && !foreign) {
           const sizes = await c.measure(measureAddrs);
           if (Object.keys(sizes).length)
             out.computed = Object.fromEntries(Object.entries(sizes).map(([k, v]) => [k, { w: Math.round(v.width), h: Math.round(v.height) }]));
@@ -1911,7 +2070,7 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
           if (out.components) out.components = Object.fromEntries(Object.entries(out.components as Json).map(([k, v]) => [k, v ? toJsx(v as Json) : null]));
         }
         return out;
-      }),
+      }, args.canvas_id),
   );
 
   server.registerTool(
@@ -2078,6 +2237,7 @@ export function createMcpServer(hub: Registry, ctx: SessionCtx): McpServer {
     async (args) =>
       read((c) => {
         const res = buildExport(c.doc, c.dir, {
+          foreign: (id) => (hub.exists(id) ? { doc: hub.get(id).doc, dir: hub.get(id).dir } : undefined),
           interactive: args.interactive,
           frameIds: args.frame_ids,
           inlineImages: args.inline_images,
@@ -2127,7 +2287,8 @@ export function framesMissingNotes(c: Canvas): Array<{ id: string; name: string 
   if (frames.some(isDocFrame)) return [];
   if (frames.length < 2 && !frames.some((f) => exploreFrame(c.doc, f.id).interactive)) return [];
   const noted = new Set(c.notes.filter((n) => n.by === 'ai' && n.frame && n.kind !== 'arrow' && n.kind !== 'line').map((n) => n.frame));
-  return frames.filter((f) => !noted.has(f.id)).map((f) => ({ id: f.id, name: f.name }));
+  // 只要求补 AI 最近一轮改动过的画板：旧画板没说明不再拖着整张画布补
+  return frames.filter((f) => c.aiFrames.has(f.id) && !noted.has(f.id)).map((f) => ({ id: f.id, name: f.name }));
 }
 
 /** 缺失交互说明时的提醒文字；都写了则为空串。 */
@@ -2159,7 +2320,7 @@ function openCommentsText(c: Canvas, frameId: string): string {
   return `\n该画板上还有未关闭的用户评论：${list}。逐条对照截图确认已按评论改好后，用 design_annotate({resolve:[${open.map((a) => a.n).join(', ')}]}) 关闭；没改好的继续修改，不处理的保留并向用户说明。`;
 }
 
-function summarizeNotes(c: Canvas): Json {
+function summarizeNotes(c: Canvas, fullAi = false): Json {
   if (!c.notes.length) return {};
   const frameName = (id?: string) => (id ? c.doc.frames.find((f) => f.id === id)?.name : undefined);
   const nodeInfo = (addr?: string) => {
@@ -2204,7 +2365,15 @@ function summarizeNotes(c: Canvas): Json {
   const linked = new Set(c.notes.map((a) => a.anchorNote).filter(Boolean));
   const marks = user.filter((a) => a.kind !== 'comment').map((a) => ({ ...(linked.has(a.id) ? { id: a.id } : {}), ...mark(a) }));
   return {
-    ...(ai.length ? { ai_annotations: ai.map((a) => ({ id: a.id, ...mark(a), ...(a.pts.length > 1 ? { from: a.pts[0].map(Math.round), to: a.pts[a.pts.length - 1].map(Math.round) } : {}) })), ai_annotations_hint: '这些是你（AI）之前用 design_annotate 写的说明批注，不是用户意见；页面改动后用 design_annotate 同步更新或删除' } : {}),
+    ...(ai.length
+      ? fullAi
+        ? { ai_annotations: ai.map((a) => ({ id: a.id, ...mark(a), ...(a.pts.length > 1 ? { from: a.pts[0].map(Math.round), to: a.pts[a.pts.length - 1].map(Math.round) } : {}) })), ai_annotations_hint: '这些是你（AI）之前用 design_annotate 写的说明批注，不是用户意见；页面改动后用 design_annotate 同步更新或删除' }
+        : {
+            // 默认只给摘要：说明全文随画板数线性增长，要改哪条再用 ai_notes:"full" 取全文
+            ai_annotations: ai.map((a) => ({ id: a.id, kind: LABEL[a.kind] ?? a.kind, ...(a.frame ? { frame: a.frame } : {}), ...(a.text ? { text: a.text.length > 24 ? `${a.text.slice(0, 24)}…` : a.text } : {}) })),
+            ai_annotations_hint: '这些是你（AI）之前写的说明批注的摘要（不是用户意见）；页面改动后用 design_annotate 同步更新或删除，需要全文与坐标时 canvas_status({ai_notes:"full"})',
+          }
+      : {}),
     ...(comments.length ? { comments, comments_hint: '按评论改完并 design_screenshot 自检、确认已改好后，用 design_annotate({resolve:[n]}) 关闭对应评论；未处理的保留' } : {}),
     ...(marks.length ? { annotations: marks, annotations_hint: '坐标为相对所在画板左上角的 px；箭头从第一个点指向最后一个点' } : {}),
   };
