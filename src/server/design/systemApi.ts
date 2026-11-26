@@ -16,6 +16,7 @@ import {
   importTokensJson,
   lintSystem,
   systemFromFlat,
+  THEME_TOKEN,
   systemFromImport,
   type DesignSystem,
 } from '../../core/designSystem.js';
@@ -53,6 +54,8 @@ const SystemInput = z.object({
           scheme: z.string().trim().min(1).max(24).optional(),
           mode: z.enum(['light', 'dark']).optional(),
           swatch: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+          style: z.string().trim().min(1).max(24).optional(),
+          tokens: z.record(z.string().regex(THEME_TOKEN, '主题只能覆盖 font.* radius.* shadow.*'), z.string().trim().min(1).max(400)).optional(),
         }),
       )
       .min(1)
@@ -218,7 +221,8 @@ export function createSystem(body: CreateInput): DesignSystem {
   let ds: DesignSystem | undefined;
   if (from === 'copy') ds = { ...structuredClone(src!), id, name, version: 1, source: { kind: 'manual', ref: src!.id } };
   else if (from === 'direction') {
-    ds = systemFromDirection(String(body.ref ?? ''), { id, name, device, ...(primary ? { primary } : {}) });
+    // 编辑页里新建的系统与空白起点一样带亮 / 暗两套，用户可以在页面里删掉不要的那套
+    ds = systemFromDirection(String(body.ref ?? ''), { id, name, device, modes: ['light', 'dark'], ...(primary ? { primary } : {}) });
     if (!ds) throw invalid('这张风格卡片已失效，换一批后重选');
   } else if (from === 'css' || from === 'json') {
     const text = String(body.text ?? '');

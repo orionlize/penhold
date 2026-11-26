@@ -139,6 +139,7 @@ input, select, textarea { font: inherit; color: inherit; }
 .pg-chip.pg-drawing, .pg-chip.pg-checking { background: var(--ai); color: #fff; box-shadow: none; }
 .pg-chip.pg-unchecked { color: var(--warn); background: var(--warn-bg); box-shadow: none; }
 .pg-chip.pg-done { color: var(--ok); }
+.frame-lazy .frame-body { opacity: .55; }
 .frame-body.ai-active { box-shadow: 0 0 0 1.5px var(--ai), 0 2px 12px rgba(217, 119, 87, 0.18); }
 .skeleton { position: absolute; inset: 0; pointer-events: none; background: #e4e7ec; animation: sk-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
 @keyframes sk-pulse { 50% { opacity: 0.5; } }
@@ -202,6 +203,7 @@ input, select, textarea { font: inherit; color: inherit; }
 .player-bar .secondary { display: inline-flex; align-items: center; gap: 4px; }
 .player-frame { width: 200px; }
 .player-meta { color: var(--muted-fg); font-size: 12px; font-variant-numeric: tabular-nums; }
+.player-foreign { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft, rgba(37,99,235,.12)); color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
 .player-tip { color: var(--muted-fg); font-size: 12px; }
 .player-stage { flex: 1; min-height: 0; overflow: auto; display: flex; padding: 24px; background: var(--canvas); }
 .player-screen { margin: auto; flex: none; position: relative; overflow: hidden; border-radius: 4px; box-shadow: 0 0 0 1px var(--border), 0 12px 40px var(--shadow); background: #fff; }
@@ -536,6 +538,10 @@ input, select, textarea { font: inherit; color: inherit; }
 
 /* 首页分区 */
 .home-h2, .home-sec h2 { font-size: 15px; margin: 0 0 10px; }
+.home-project { margin-bottom: 20px; }
+.home-h3 { font-size: 13px; margin: 0 0 8px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.home-h3 .dim { font-weight: 400; font-size: 12px; }
+.card-title .iter { font-size: 11px; font-weight: 500; padding: 1px 6px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
 .home-sec { margin-top: 36px; }
 .home-sec-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
 .home-sec-head h2 { margin: 0; }
@@ -646,9 +652,19 @@ select.ds-in { padding-right: 4px; }
 .tw-seg button { flex: 1; padding: 4px 8px; border: 0; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
 .tw-seg button.on { background: var(--popover); box-shadow: 0 1px 3px rgba(0,0,0,.2); }
 .tw-schemes { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 4px; }
+.tw-styles { grid-template-columns: repeat(auto-fill, minmax(108px, 1fr)); }
 .tw-schemes button { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
 .tw-schemes button.on { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); }
 .tw-schemes button:disabled { cursor: default; opacity: .6; }
 .tw-schemes i { flex: none; width: 14px; height: 14px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0,0,0,.15); }
 .tw-schemes span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tw-hint { margin: 8px 0 0; font-size: 11px; color: var(--muted-fg); line-height: 1.5; }
+
+/* 引用卡片：本画布链接到的旧画布页面（只读） */
+.ref-card { position: absolute; box-sizing: border-box; padding: 14px 16px; border: 1.5px dashed var(--muted-fg); border-radius: 10px; background: var(--popover); display: flex; flex-direction: column; gap: 4px; }
+.ref-card.missing { border-color: #e5484d; }
+.ref-canvas { font-size: 12px; color: var(--muted-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ref-name { font-size: 16px; font-weight: 600; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ref-meta { font-size: 12px; color: var(--muted-fg); }
+.ref-open { margin-top: auto; font-size: 13px; color: var(--accent); text-decoration: none; }
+.ref-open:hover { text-decoration: underline; }

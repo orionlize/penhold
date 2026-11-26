@@ -267,13 +267,18 @@ export async function runDaemon() {
       // 管理 API
       if (p === '/api/canvases' && req.method === 'GET') return send(res, 200, hub.list());
       if (p === '/api/fonts' && req.method === 'GET') return send(res, 200, await listFonts());
-      let m = /^\/api\/canvases\/([0-9a-f-]{36})\/(rename|duplicate|delete|versions|restore)$/.exec(p);
+      let m = /^\/api\/canvases\/([0-9a-f-]{36})\/(rename|duplicate|delete|versions|restore|doc)$/.exec(p);
       if (m) {
         const [, id, action] = m;
         const body = req.method === 'POST' ? JSON.parse((await readBody(req, 1e6)).toString() || '{}') : {};
         if (action === 'rename' && req.method === 'POST') return (hub.rename(id, String(body.title ?? '')), send(res, 200, { ok: true }));
         if (action === 'duplicate' && req.method === 'POST') return send(res, 200, { id: hub.duplicate(id) });
         if (action === 'delete' && req.method === 'POST') return (hub.trash(id), send(res, 200, { ok: true }));
+        // 播放预览跨画布跳转：只读取另一个画布的设计稿
+        if (action === 'doc' && req.method === 'GET') {
+          const c = hub.get(id);
+          return send(res, 200, { doc: c.doc, title: c.meta.title });
+        }
         if (action === 'versions' && req.method === 'GET') return send(res, 200, hub.get(id).listVersions());
         if (action === 'versions' && req.method === 'POST') return send(res, 200, { file: hub.get(id).saveVersion(String(body.name || '未命名版本')) });
         if (action === 'restore' && req.method === 'POST') return send(res, 200, { rev: hub.get(id).restoreVersion(String(body.file)).rev });
@@ -318,6 +323,7 @@ export async function runDaemon() {
         const c = hub.get(m[1]);
         const q = url.searchParams;
         const r = buildExport(c.doc, c.dir, {
+          foreign: (id) => (hub.exists(id) ? { doc: hub.get(id).doc, dir: hub.get(id).dir } : undefined),
           frameIds: q.get('frames')?.split(',').filter(Boolean),
           inlineImages: q.get('inline') !== '0',
           styleMode: q.get('style') === 'inline' ? 'inline' : 'class',

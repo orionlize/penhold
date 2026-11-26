@@ -1,6 +1,6 @@
 // 中间画布：缩放平移、画板 iframe、选中覆盖层与盒模型高亮、原地文本编辑。
 import { useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
-import { inferRender } from '../../../src/core/doc';
+import { getIndex, inferRender } from '../../../src/core/doc';
 import { isDocFrame } from '../../../src/core/states';
 import { commitPatch, effective, listeners, select, send, setUi, toast, useStore } from '../store';
 import { dirtyByFrame, FrameView, insertedByFrame, probeStates } from '../lib/frames';
@@ -14,8 +14,41 @@ import { Icon } from '../lib/icons';
 import { TweaksPanel } from './Tweaks';
 import { startPlay } from './Player';
 import { exportFrame, type FrameExportKind } from '../lib/frameExport';
+import { refCards, type RefCard } from '../../../src/core/links';
+import { getForeign, loadForeign, useForeignVersion } from '../lib/foreign';
 
 export const views = new Map<string, FrameView>();
+
+// ---------- 按需挂载画板 ----------
+// 每个画板是一个常驻 iframe，画板多时加载慢、占内存。画板第一次进入可视区域附近、或被截图 / 测量 / 选中 /
+// AI 光标用到时才挂载 iframe，挂载后一直保留（截图、测量、自动高度与批注定位都依赖已渲染的 iframe）。
+const live = new Set<string>();
+let liveChanged: (() => void) | null = null;
+
+/** 让这些画板挂载 iframe（节点地址会换成所在画板）。 */
+export function ensureLive(addrs: string[]) {
+  const doc = useStore.getState().doc;
+  if (!doc) return;
+  let changed = false;
+  for (const a of addrs) {
+    const id = doc.frames.some((f) => f.id === a) ? a : getIndex(doc).get(a.split(':')[0])?.frame?.id;
+    if (id && !live.has(id)) {
+      live.add(id);
+      changed = true;
+    }
+  }
+  if (changed) liveChanged?.();
+}
+
+const HEIGHTS_KEY = (canvasId: string) => `dm-frame-heights:${canvasId}`;
+/** 上次看到的自动高度：未挂载的画板按它占位，避免布局跳动。 */
+function cachedHeights(canvasId: string): Record<string, number> {
+  try {
+    return JSON.parse(localStorage.getItem(HEIGHTS_KEY(canvasId)) ?? '{}') as Record<string, number>;
+  } catch {
+    return {};
+  }
+}
 
 export function viewOf(addr: string): FrameView | undefined {
   const doc = useStore.getState().doc;
@@ -40,8 +73,37 @@ async function waitView(target: string, timeout = 5000): Promise<FrameView | und
   }
 }
 
+/**
+ * 把节点（或画板）移进可视区域：已完整可见时不动；否则平移使其居中，放不下时缩小到能放下
+ * （最小 25%，仍放不下的高页面贴顶显示）。用于图层树点击定位。
+ */
+export async function revealNode(addr: string) {
+  ensureLive([addr]);
+  const v = await waitView(addr);
+  const s = useStore.getState();
+  const el = document.querySelector('.viewport');
+  const p = placements(s.doc).find((q) => q.f.id === v?.frameId);
+  const r = v?.rect(addr);
+  if (!v || !el || !p || !r || (!r.width && !r.height)) return; // 隐藏节点没有尺寸，不移动
+  const vw = el.clientWidth;
+  const vh = el.clientHeight;
+  const M = 60; // 四周留白（避开顶部工具栏与底部缩放条）
+  const wx = p.x + r.left;
+  const wy = r.top;
+  const sx = s.panX + wx * s.zoom;
+  const sy = s.panY + wy * s.zoom;
+  if (sx >= M && sy >= M && sx + r.width * s.zoom <= vw - M && sy + r.height * s.zoom <= vh - M) return;
+  const fit = Math.min((vw - 2 * M) / Math.max(r.width, 1), (vh - 2 * M) / Math.max(r.height, 1));
+  const z = Math.min(s.zoom, Math.max(0.25, fit));
+  const panX = (vw - r.width * z) / 2 - wx * z;
+  const panY = r.height * z <= vh - 2 * M ? (vh - r.height * z) / 2 - wy * z : M - wy * z;
+  useStore.setState({ zoom: z, panX, panY });
+  setUi({});
+}
+
 listeners.shot = async (reqId, target, scale) => {
   try {
+    ensureLive([target]);
     const v = await waitView(target);
     if (!v) throw new Error(`画布中找不到 ${target}（节点可能被隐藏）`);
     v.finishReveal(); // 截图与检查必须看到最终状态，不能停在回放中途
@@ -61,7 +123,10 @@ listeners.probe = async (reqId, req) => {
     send({ t: 'probe_result', reqId, error: (e as Error).message });
   }
 };
-listeners.measure = (reqId, ids) => {
+listeners.measure = async (reqId, ids) => {
+  // 还没挂载的画板先挂载并等它渲染好
+  ensureLive(ids);
+  await Promise.all(ids.map((id) => waitView(id)));
   const sizes = {};
   for (const v of views.values()) Object.assign(sizes, v.measure(ids));
   send({ t: 'measure_result', reqId, sizes });
@@ -77,6 +142,42 @@ export function Viewport() {
   const heights = useStore((s) => s.frameHeights);
   const [tick, bump] = useReducer((x: number) => x + 1, 0);
   const root = useRef<HTMLDivElement>(null);
+  const [, liveBump] = useReducer((x: number) => x + 1, 0);
+  const [vpSize, setVpSize] = useState({ w: 1600, h: 1000 });
+  useEffect(() => {
+    liveChanged = liveBump;
+    return () => {
+      liveChanged = null;
+    };
+  }, []);
+  useLayoutEffect(() => {
+    const el = root.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setVpSize({ w: el.clientWidth, h: el.clientHeight }));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  // 换画布时重新按需挂载
+  useEffect(() => {
+    live.clear();
+    liveBump();
+  }, [canvasId]);
+  // 自动高度存到本地，下次打开时未挂载的画板按它占位
+  useEffect(() => {
+    if (!canvasId || !Object.keys(heights).length) return;
+    try {
+      localStorage.setItem(HEIGHTS_KEY(canvasId), JSON.stringify({ ...cachedHeights(canvasId), ...heights }));
+    } catch {
+      /* 无存储时只是占位高度不准 */
+    }
+  }, [canvasId, heights]);
+  // 选中、编辑与 AI 光标所在的画板必须挂载
+  const selection = useStore((s) => s.selection);
+  const aiTarget = useStore((s) => s.aiTarget);
+  const editingText = useStore((s) => s.editingText);
+  useEffect(() => {
+    ensureLive([...selection, ...(aiTarget ? [aiTarget.frame] : []), ...(editingText ? [editingText] : [])]);
+  }, [selection, aiTarget, editingText, doc]);
   const spaceDown = useRef(false);
   const downTarget = useRef<EventTarget | null>(null);
 
@@ -213,7 +314,16 @@ export function Viewport() {
         {placed.map(({ f, x }) => {
           const page = pages.get(f.id);
           const skeleton = !!page && page.status === 'pending' && page.empty;
-          const h = heights[f.id] ?? (typeof f.height === 'number' ? f.height : 400);
+          const cached = canvasId ? cachedHeights(canvasId)[f.id] : undefined;
+          const h = heights[f.id] ?? (typeof f.height === 'number' ? f.height : (cached ?? skeletonHeight(f.width, f.height)));
+          // 可视区域四周各留一屏的余量：平移时提前挂载
+          const mx = vpSize.w / zoom;
+          const my = vpSize.h / zoom;
+          const vx = -panX / zoom;
+          const vy = -panY / zoom;
+          if (!live.has(f.id) && x + f.width >= vx - mx && x <= vx + 2 * mx && h >= vy - my && 0 <= vy + 2 * my) live.add(f.id);
+          if (!live.has(f.id))
+            return <FramePlaceholder key={f.id} x={x} width={f.width} height={h} name={f.name} zoom={zoom} />;
           return (
           <FrameBox
             key={f.id}
@@ -233,6 +343,7 @@ export function Viewport() {
           />
           );
         })}
+        {doc ? <RefCards cards={refCards(doc)} zoom={zoom} /> : null}
         <AnnotationLayer />
         <AiCursor />
       </div>
@@ -257,6 +368,55 @@ const PAGE_STATUS: Record<PageStatus, string> = {
   checking: t('status.checking'),
   done: t('status.done'),
 };
+
+/** 还没挂载的画板：只占位，进入可视区域附近时换成真正的画板。 */
+function FramePlaceholder(p: { x: number; width: number; height: number; name: string; zoom: number }) {
+  return (
+    <div className="frame frame-lazy" style={{ left: p.x, top: 0, width: p.width }}>
+      <div className="frame-label" style={{ transform: `scale(${1 / p.zoom})`, transformOrigin: 'left bottom' }}>
+        {p.name} <span>{p.width}</span>
+      </div>
+      <div className="frame-body" style={{ width: p.width, height: p.height }} />
+    </div>
+  );
+}
+
+/**
+ * 引用卡片：本画布的页面链接到的旧画布页面（同一项目之前的迭代），只读显示名称与所在画布，
+ * 不进入设计稿与导出；点“打开”在新标签页打开那个画布。
+ */
+function RefCards({ cards, zoom }: { cards: RefCard[]; zoom: number }) {
+  useForeignVersion();
+  useEffect(() => {
+    for (const c of cards) loadForeign(c.canvas);
+  }, [cards.map((c) => c.canvas).join(',')]);
+  if (!cards.length) return null;
+  return (
+    <>
+      {cards.map((c, i) => {
+        const f = getForeign(c.canvas);
+        const doc = f && typeof f === 'object' ? f : undefined;
+        const page = doc?.doc.frames.find((x) => x.id === c.frame);
+        const missing = f === 'error' || (doc && !page);
+        return (
+          <div key={`${c.canvas}/${c.frame}`} className={`ref-card${missing ? ' missing' : ''}`} style={{ left: c.x, top: c.y, width: c.w, height: c.h }}>
+            {i === 0 ? (
+              <div className="frame-label" style={{ transform: `scale(${1 / zoom})`, transformOrigin: 'left bottom' }}>
+                {t('ref.heading')}
+              </div>
+            ) : null}
+            <div className="ref-canvas">{doc ? doc.title : f === 'error' ? t('ref.noCanvas') : '…'}</div>
+            <div className="ref-name">{page ? page.name : missing ? t('ref.noPage', { id: c.frame }) : c.frame}</div>
+            {page ? <div className="ref-meta">{t('ref.readonly', { w: page.width })}</div> : null}
+            <a className="ref-open" href={`/c/${c.canvas}`} target="_blank" rel="noopener">
+              {t('ref.open')}
+            </a>
+          </div>
+        );
+      })}
+    </>
+  );
+}
 
 /** 骨架屏：不展示具体内容，整个画板就是一块带微光动画的骨架。 */
 function Skeleton() {

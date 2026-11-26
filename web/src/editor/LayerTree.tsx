@@ -1,4 +1,4 @@
-// 侧栏图层树：选中、重命名、隐藏、锁定。不可拖拽，不可增删节点。
+// 侧栏图层树：选中（并把画布平移到该节点）、重命名、隐藏、锁定。不可拖拽，不可增删节点。
 // 铅笔 / 钢笔 / 矩形批注也列在所属画板下（无画板的列在顶层），点击即选中该批注。
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Annotation, DesignDoc, Node } from '../../../src/core/types';
@@ -7,6 +7,7 @@ import { Icon } from '../lib/icons';
 import { commitPatch, effective, select, useStore } from '../store';
 import { inLayers, noteIcon, noteName } from '../lib/shapes';
 import { t } from '../i18n';
+import { revealNode } from './Viewport';
 
 interface Row {
   addr: string;
@@ -149,6 +150,7 @@ export function LayerTree() {
                 if (e.shiftKey) select(selection.includes(r.addr) ? selection.filter((x) => x !== r.addr) : [...selection, r.addr]);
                 else select([r.addr]);
                 if (selNote) useStore.setState({ selNote: null });
+                if (!e.shiftKey) void revealNode(r.addr);
               }}
               onDoubleClick={() => !lock && !r.frame && setRenaming(r.addr)}
               onMouseEnter={() => useStore.setState({ hover: r.addr })}

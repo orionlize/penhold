@@ -27,7 +27,7 @@ import type {
   Transaction,
   UiState,
 } from '../../core/types.js';
-import { flattenSystem } from '../../core/designSystem.js';
+import { flattenSystem, themeKeys } from '../../core/designSystem.js';
 import { loadSystem } from '../design/systems.js';
 import { directionDetail, type DirectionRecord } from '../design/directions.js';
 import { briefRecord, DIRECTION_Q, type BriefRecord } from '../design/brief.js';
@@ -51,10 +51,14 @@ export interface SessionMeta {
   preset?: string;
   /** 选定的设计方向（design_direction pick 记录）。 */
   direction?: DirectionRecord;
+  /** 最近几批给出的方向卡片 id（新的在前）：用户没选风格时，选中卡片所在批次的其余卡片成为备选风格。 */
+  offered?: string[][];
   /** 需求问卷的回答（design_ask）。 */
   brief?: BriefRecord;
   /** 安装到本画布的设计系统（design_system install 记录）：令牌按 theme 展开写入 doc.tokens。 */
   system?: { id: string; version: number; theme: string; installedAt: number };
+  /** 从别的画布复制来的画板（frame_create from）：画板 id → 来源画布、画板与复制时的 rev。 */
+  basedOn?: Record<string, { canvas: string; frame: string; rev: number }>;
 }
 
 interface ChangeRec {
@@ -111,6 +115,8 @@ export class Canvas {
   private shooting: string | null = null;
   private round = 0;
   private lastAiRound: Op[][] = [];
+  /** AI 本轮（锁空闲超时后同一会话接着画也算同一轮）与上一轮改动过的画板：交互说明只要求补这些。 */
+  aiFrames = new Set<string>();
   /** 每个截图目标最近一次的截图（内存中，供下一次截图做像素对比）。 */
   lastShots = new Map<string, { png: string; rev: number; scale: number }>();
   /** 用户整体回退了 AI 上一轮：下一次 AI 调用时告诉它一次。 */
@@ -382,6 +388,7 @@ export class Canvas {
         for (const f of frames) {
           this.pendingCheck.add(f);
           this.lock.started.add(f);
+          this.aiFrames.add(f);
         }
         const cur = this.cursorFrom(ops, frames);
         if (cur) this.lock.cursor = { ...cur, status: 'drawing', note: opts.note?.trim() || undefined, at: tx.ts };
@@ -636,6 +643,7 @@ export class Canvas {
   private makeLock(session: string): Lock {
     const s = this.suspended?.session === session ? this.suspended : null;
     if (s) this.suspended = null;
+    else this.aiFrames.clear();
     const plan = s ? s.plan.filter((id) => this.doc.frames.some((f) => f.id === id)) : [];
     return {
       session,
@@ -780,21 +788,22 @@ export class Canvas {
     const sys = this.meta.system;
     const ds = sys ? loadSystem(sys.id) : undefined;
     if (!sys || !ds) return null;
-    return { system: ds.name, theme: sys.theme, themes: ds.color.themes.map((t) => ({ id: t.id, name: t.name, ...(t.scheme ? { scheme: t.scheme } : {}), ...(t.mode ? { mode: t.mode } : {}), ...(t.swatch ? { swatch: t.swatch } : {}) })) };
+    return { system: ds.name, theme: sys.theme, themes: ds.color.themes.map((t) => ({ id: t.id, name: t.name, ...(t.style ? { style: t.style } : {}), ...(t.scheme ? { scheme: t.scheme } : {}), ...(t.mode ? { mode: t.mode } : {}), ...(t.swatch ? { swatch: t.swatch } : {}) })) };
   }
 
   pushThemeInfo() {
     this.broadcast({ t: 'themeInfo', info: this.themeInfo() });
   }
 
-  /** 用户在 Tweaks 面板切换主题：把该主题的颜色令牌写进画布（可撤销）。 */
+  /** 用户在 Tweaks 面板切换主题：把该主题的颜色令牌（切换风格时还有字体、圆角、阴影）写进画布（可撤销）。 */
   setSystemTheme(theme: string) {
     if (this.lock) throw new CanvasError('AI 正在修改，请稍后再切换主题');
     const sys = this.meta.system;
     const ds = sys ? loadSystem(sys.id) : undefined;
     if (!sys || !ds || !ds.color.themes.some((t) => t.id === theme)) throw new CanvasError('没有这个主题');
-    const colors = Object.fromEntries(Object.entries(flattenSystem(ds, theme)).filter(([k, v]) => k.startsWith('color.') && this.doc.tokens[k] !== v));
-    if (Object.keys(colors).length) this.commit('user', [{ op: 'set_tokens', tokens: colors }], { system: true });
+    const switched = themeKeys(ds);
+    const next = Object.fromEntries(Object.entries(flattenSystem(ds, theme)).filter(([k, v]) => switched(k) && this.doc.tokens[k] !== v));
+    if (Object.keys(next).length) this.commit('user', [{ op: 'set_tokens', tokens: next }], { system: true });
     this.meta.system = { ...sys, theme };
     this.saveMeta();
     this.pushThemeInfo();

@@ -14,7 +14,14 @@ export interface DsTheme {
   mode?: 'light' | 'dark';
   /** 该主题的主色（#RRGGBB），用于主题切换按钮上的色块。 */
   swatch?: string;
+  /** 风格名（如“瑞士网格”）：系统带几种可切换的风格时，同一风格的主题共用一个名字。 */
+  style?: string;
+  /** 该主题覆盖的非颜色令牌（font.* radius.* shadow.*）：切换风格时随颜色一起写进画布。 */
+  tokens?: Record<string, string>;
 }
+
+/** 主题可以覆盖的非颜色令牌。 */
+export const THEME_TOKEN = /^(font|radius|shadow)\.[a-z0-9][a-z0-9-]{0,23}$/;
 
 export interface DsColor {
   /** 不带前缀的名字：primary、on-primary、bg、fg… 展开为 color.<name>。 */
@@ -258,7 +265,15 @@ export function flattenSystem(ds: DesignSystem, theme?: string): Record<string, 
   for (const s of ds.spacing) out[`space.${s.name}`] = s.value;
   for (const s of ds.radius) out[`radius.${s.name}`] = s.value;
   for (const s of ds.shadow) out[`shadow.${s.name}`] = s.value;
+  const over = ds.color.themes.find((t) => t.id === th)?.tokens;
+  if (over) for (const [k, v] of Object.entries(over)) if (THEME_TOKEN.test(k)) out[k] = v;
   return out;
+}
+
+/** 切换主题时要写进画布的令牌名：全部颜色，加上任一主题覆盖过的字体、圆角、阴影。 */
+export function themeKeys(ds: DesignSystem): (key: string) => boolean {
+  const styled = new Set(ds.color.themes.flatMap((t) => Object.keys(t.tokens ?? {})));
+  return (k) => k.startsWith('color.') || styled.has(k);
 }
 
 /** 文字样式落到节点 style 上的写法。 */
@@ -478,6 +493,23 @@ export function renderReadme(ds: DesignSystem): string {
   lines.push(`| 令牌 | ${themes.map((t) => t.name).join(' | ')} | 用途 | 对比度（${themes[0]?.name ?? ''}） |`, `|---|${themes.map(() => '---|').join('')}---|---|`);
   for (const t of ds.color.tokens)
     lines.push(`| \`color.${t.name}\` | ${themes.map((th) => swatch(valueIn(t, th.id, first))).join(' | ')} | ${t.usage ?? colorRole(t.name)?.usage ?? ''} | ${ratio(t.name, first)} |`);
+  const styles = [...new Set(themes.map((t) => t.style).filter((x): x is string => !!x))];
+  if (styles.length > 1) {
+    lines.push(
+      '',
+      '## 风格',
+      '',
+      '用户可以在画布的 Tweaks 面板里切换以下风格。第一种是默认风格，“视觉基础”写的就是它；其余风格替换颜色、字体、圆角与阴影令牌，所以颜色、字体、圆角、阴影一律引用令牌，切换才会生效。',
+      '',
+      '| 风格 | 主题 | 字体（标题 / 正文） | 圆角（sm / md / lg） | 阴影（md） |',
+      '|---|---|---|---|---|',
+    );
+    for (const st of styles) {
+      const list = themes.filter((t) => t.style === st);
+      const f = flattenSystem(ds, list[0].id);
+      lines.push(`| ${st} | ${list.map((t) => `\`${t.id}\``).join(' ')} | ${f['font.heading'] ?? '—'} / ${f['font.body'] ?? '—'} | ${['sm', 'md', 'lg'].map((k) => f[`radius.${k}`] ?? '—').join(' / ')} | ${f['shadow.md'] ?? '—'} |`);
+    }
+  }
   lines.push('', '## 文字', '');
   lines.push(`字体：${Object.entries(ds.type.families).map(([k, v]) => `\`font.${k}\` = ${v}`).join('；')}`, '');
   lines.push(`字阶：${Object.entries(ds.type.scale).map(([k, v]) => `\`size.${k}\` ${v}`).join(' · ')}`, '');
@@ -519,8 +551,9 @@ export function systemCss(ds: DesignSystem): string {
   // 名字可能含 */ 或 </style>，写进注释前去掉
   const out = [`/* ${ds.name.replace(/[<>*/\\]/g, '')} v${ds.version} — 由 penhold-mcp 设计系统生成 */`, block(':root', flattenSystem(ds))];
   const first = ds.color.themes[0]?.id;
+  const switched = themeKeys(ds);
   for (const th of ds.color.themes.slice(1)) {
-    const colors = Object.fromEntries(Object.entries(flattenSystem(ds, th.id)).filter(([k]) => k.startsWith('color.')));
+    const colors = Object.fromEntries(Object.entries(flattenSystem(ds, th.id)).filter(([k]) => switched(k)));
     out.push(block(`[data-theme="${th.id}"]`, colors));
     if (th.id === 'dark' && first !== 'dark') out.push(`@media (prefers-color-scheme: dark){\n${block(':root:not([data-theme="light"])', colors)}\n}`);
   }

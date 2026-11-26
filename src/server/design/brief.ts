@@ -63,7 +63,7 @@ const COLORS: BriefOption[] = [
 const COLOR_QUESTION: BriefQuestion = {
   id: COLOR_Q,
   label: '有偏好的主色或品牌色吗？',
-  help: '可多选：选了几种，设计系统就生成几套配色（各含亮 / 暗），之后在画布的 Tweaks 面板里切换比较。',
+  help: '可多选：选了几种，设计系统就生成几套配色，之后在画布的 Tweaks 面板里切换比较。',
   kind: 'multi',
   options: COLORS,
   other: true,
@@ -116,19 +116,41 @@ export function directionOptions(cards: DirectionCard[]): BriefOption[] {
 }
 
 export function directionQuestion(cards: DirectionCard[]): BriefQuestion {
-  return { id: DIRECTION_Q, label: '喜欢哪种视觉方向？', help: '色块依次为背景、主色、强调色、文字色。都不合适可以换一批。', kind: 'single', options: directionOptions(cards), reroll: true };
+  return {
+    id: DIRECTION_Q,
+    label: '喜欢哪种视觉方向？',
+    help: '色块依次为背景、主色、强调色、文字色。都不合适可以换一批；交给 AI 决定时，其余几种方向会放进画布的 Tweaks 面板，画好后可以切换比较。',
+    kind: 'single',
+    options: directionOptions(cards),
+    reroll: true,
+  };
 }
 
+export const TONE_Q = 'tone';
+const BOTH_TONES = '浅色和深色都要';
+
 const TONE: BriefQuestion = {
-  id: 'tone',
+  id: TONE_Q,
   label: '浅色还是深色界面？',
+  help: `选“${BOTH_TONES}”时生成两套主题，在画布的 Tweaks 面板里切换；否则只生成一种。`,
   kind: 'single',
   options: [
     { value: AUTO, label: '都可以' },
     { value: '浅色', label: '浅色' },
     { value: '深色', label: '深色' },
+    { value: 'both', label: BOTH_TONES },
   ],
 };
+
+/** 明暗题的回答 → 设计系统要生成的明暗；没回答或“都可以”时返回 undefined（只生成方向本身的明暗）。 */
+export function toneModes(answer: string | string[] | undefined): Array<'light' | 'dark'> | undefined {
+  const v = (Array.isArray(answer) ? answer.join(' ') : (answer ?? '')).trim();
+  if (!v) return undefined;
+  if (v === BOTH_TONES || /都要|两种|both/i.test(v)) return ['light', 'dark'];
+  if (/深|暗|dark/i.test(v)) return ['dark'];
+  if (/浅|亮|light/i.test(v)) return ['light'];
+  return undefined;
+}
 
 let seq = 0;
 const formId = () => `b${Date.now().toString(36)}${(seq++).toString(36)}`;

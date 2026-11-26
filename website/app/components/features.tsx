@@ -6,9 +6,10 @@ import { Resend } from './ticker';
 const ITEMS = [
   { id: 'collab', title: '画布双向协作', desc: 'AI 改结构，你调样式，互不覆盖' },
   { id: 'proto', title: '能点的原型', desc: 'tab、倒计时、校验写进稿子里' },
-  { id: 'system', title: '自带设计系统', desc: '亮暗主题、字阶、组件存在项目里' },
+  { id: 'system', title: '自带设计系统', desc: '颜色主题、字阶、组件存在项目里' },
   { id: 'check', title: '画完先自检', desc: '截图、比对、查问题、自己修' },
   { id: 'flow', title: '流程图自动成图', desc: '几行 Mermaid，画板间箭头排好' },
+  { id: 'rounds', title: '按迭代分画布', desc: '新一轮另开画布，跨画布链到旧页' },
   { id: 'export', title: '导出就能用', desc: '单文件 HTML + tokens.css' },
 ] as const;
 
@@ -25,7 +26,7 @@ const COPY: Record<FeatId, { title: string; body: string }> = {
   },
   system: {
     title: '设计系统跟着项目走',
-    body: '颜色、字阶、间距、组件存成项目级系统，亮暗两套主题自动修正对比度；也能从你的 Tailwind / shadcn 变量直接导入。',
+    body: '颜色、字阶、间距、组件存成项目级系统，对比度自动修正。明暗、配色和备选风格都是主题，在 Tweaks 面板随手切换；也能从你的 Tailwind / shadcn 变量直接导入。',
   },
   check: {
     title: '交到你手里前，先照过镜子',
@@ -34,6 +35,10 @@ const COPY: Record<FeatId, { title: string; body: string }> = {
   flow: {
     title: '业务流程，写几行就成图',
     body: 'AI 用 Mermaid 写出跳转与分支，服务端排好位置：画板之间直接连箭头，不相邻的从上方绕过去，判断与异常路径单独标出。说明只画在画布上，不进导出。',
+  },
+  rounds: {
+    title: '画到第十轮，画布也不臃肿',
+    body: '每轮的新页面画在同一项目的新画布上，跳到旧页面用跨画布链接，旧页面在画布上显示成只读卡片，播放和导出时也能跳过去。旧页面要改就先复制过来，旧画布保持原样；AI 每次只读本轮的稿子，更快也更省 token。',
   },
   export: {
     title: '导出的是文件，不是链接',
@@ -233,6 +238,61 @@ function Visual({ id }: { id: FeatId }) {
                 </span>
               </span>
             ))}
+          </span>
+        </div>
+      );
+    case 'rounds':
+      return (
+        <div className="v-rounds">
+          <span className="v-round old">
+            <span className="mono-xs muted">第 1 轮 · 首页与登录</span>
+            <span className="v-round-frames">
+              {['首页', '登录'].map((name) => (
+                <span key={name} className="v-flow-frame">
+                  <span className="mono-xs muted">{name}</span>
+                  <i className="title" />
+                  <i />
+                  <i className="btn" />
+                </span>
+              ))}
+            </span>
+          </span>
+          <span className="v-round new">
+            <span className="mono-xs accent">第 2 轮 · 会员体系</span>
+            <span className="v-round-frames">
+              {['会员中心', '支付结果'].map((name, i) => (
+                <span key={name} className="v-flow-step">
+                  {i > 0 && (
+                    <span className="v-flow-arrow">
+                      <i />
+                    </span>
+                  )}
+                  <span className="v-flow-frame">
+                    <span className="mono-xs muted">{name}</span>
+                    <i className="title" />
+                    <i />
+                    <i className="btn" />
+                  </span>
+                </span>
+              ))}
+              <span className="v-flow-arrow dashed">
+                <span className="mono-xs muted">返回首页</span>
+                <i />
+              </span>
+              <span className="v-ref">
+                <span className="mono-xs muted">只读 · 第 1 轮</span>
+                <b className="mono-sm">首页</b>
+                <span className="mono-xs accent">打开所在画布 ↗</span>
+              </span>
+            </span>
+            <span className="mono-xs fg">
+              <span className="tv" data-tv="0">
+                href: #&lt;第 1 轮画布&gt;/home · 跨画布链接
+              </span>
+              <span className="tv" data-tv="1">
+                frame_create(from) · 复制过来再改，旧画布不动
+              </span>
+            </span>
           </span>
         </div>
       );

@@ -8,7 +8,7 @@ const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dm-brief-'));
 process.env.DESIGN_MCP_HOME = home;
 
 const { Canvas } = await import('../src/server/canvas/canvas.ts');
-const { AUTO, briefRecord, customBriefForm, defaultBriefForm, DIRECTION_Q } = await import('../src/server/design/brief.ts');
+const { AUTO, briefRecord, customBriefForm, defaultBriefForm, DIRECTION_Q, TONE_Q, toneModes } = await import('../src/server/design/brief.ts');
 const { suggestDirections } = await import('../src/server/design/directions.ts');
 
 const cards = suggestDirections({ brief: '移动端登录页', seed: 4 });
@@ -106,4 +106,17 @@ test('主色题可多选，回答整理成多套配色', async () => {
   assert.equal(s[2].primary, '#FF6A00');
   assert.deepEqual(colorSchemes('墨绿、紫').map((x) => x.id), ['green', 'purple']);
   assert.deepEqual(colorSchemes(undefined), []);
+});
+
+test('明暗题：只选一种时只生成一种，“都要”才生成两套；不填由方向决定', () => {
+  const f = defaultBriefForm({ brief: '移动端登录页', cards });
+  const tone = f.questions.find((q) => q.id === TONE_Q)!;
+  const both = tone.options!.find((o) => o.value === 'both')!;
+  const rec = (v: string) => briefRecord(f, { [TONE_Q]: v }).answers.find((a) => a.id === TONE_Q)?.answer;
+  assert.deepEqual(toneModes(rec('浅色')), ['light']);
+  assert.deepEqual(toneModes(rec('深色')), ['dark']);
+  assert.deepEqual(toneModes(rec('both')), ['light', 'dark']);
+  assert.equal(rec('both'), both.label);
+  assert.equal(toneModes(rec(AUTO)), undefined);
+  assert.equal(toneModes(undefined), undefined);
 });

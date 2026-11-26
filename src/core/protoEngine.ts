@@ -20,7 +20,8 @@ export interface RuntimeEntry {
 }
 
 export interface ProtoNav {
-  go(frameId: string): void;
+  /** canvas：跨画布跳转时目标画板所在的画布 id。 */
+  go(frameId: string, canvas?: string): void;
   back(): void;
   open(url: string): void;
   follow(href: string): void;
@@ -356,7 +357,7 @@ export function createProtoEngine() {
             this.run((truthy(a.when, this.vars) ? a.then : a.else) ?? []);
             break;
           case 'navigate':
-            return this.nav.go(a.frame);
+            return this.nav.go(a.frame, a.canvas);
           case 'back':
             return this.nav.back();
           case 'open':

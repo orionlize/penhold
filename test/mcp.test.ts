@@ -14,9 +14,9 @@ const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.j
 
 type R = { content: Array<{ type: string; text?: string }>; isError?: boolean };
 
-async function setup() {
+async function setup(cwd = process.cwd()) {
   const hub = new Registry();
-  const server = createMcpServer(hub, { id: 's1', cwd: process.cwd(), ancestors: [] });
+  const server = createMcpServer(hub, { id: 's1', cwd, ancestors: [] });
   const [a, b] = InMemoryTransport.createLinkedPair();
   await server.connect(a);
   const client = new Client({ name: 't', version: '0' });
@@ -138,4 +138,63 @@ test('jsx：node_insert / design_read(format:"jsx") / node_replace(keepChildren)
   assert.ok(notes.some((n) => n.kind === 'text' && n.text === '登录成功'));
   assert.ok(notes.some((n) => n.kind === 'rect' && n.text === '网络异常?' && n.color === '#FDF1D6'));
   canvas.close();
+});
+
+test('用户没选风格：同批其余方向成为 Tweaks 里的备选风格；选了风格时不附带，明暗按回答只生成一种', async (t) => {
+  const { DIRECTION_Q } = await import('../src/server/design/brief.ts');
+  const { directionDetail } = await import('../src/server/design/directions.ts');
+  // 本机 ~/.claude/skills 里的 skill 会被当成设计规范，那样就不会给方向卡片
+  const home = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.HOME = process.env.USERPROFILE = fs.mkdtempSync(path.join(os.tmpdir(), 'dm-mcp-home-'));
+  t.after(() => {
+    for (const [k, v] of Object.entries(home)) if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  });
+  {
+    const { hub, call } = await setup(fs.mkdtempSync(path.join(os.tmpdir(), 'dm-mcp-style-')));
+    const opened = await call('canvas_open', { new: true, title: '记账' });
+    const canvas = hub.get(opened.json.canvas_id);
+    canvas.clients.add({ readyState: 1, send: () => {} } as never);
+    canvas.meta.brief = { at: Date.now(), skipped: true, answers: [] };
+    const plan = await call('design_plan', { pages: [{ name: '首页', width: 390 }] });
+    assert.ok(!plan.r.isError, plan.text);
+    const cards = plan.json.design_directions as Array<{ id: string }>;
+    assert.equal(cards.length, 3);
+    const pick = await call('design_direction', { pick: cards[1].id, concept: '结余是唯一的大数字', motif: '小票' });
+    assert.ok(!pick.r.isError, pick.text);
+    assert.equal(pick.json.alternate_styles.length, 2);
+    assert.deepEqual(canvas.meta.direction?.alternates, [cards[0].id, cards[2].id]);
+    const sys = await call('design_system', { action: 'create', name: '记账' });
+    assert.ok(!sys.r.isError, sys.text);
+    assert.match(sys.json.tweaks_themes, /风格/);
+    assert.doesNotMatch(sys.json.tweaks_themes, /明暗/, '没有回答明暗时不附带亮 / 暗两套');
+    const info = canvas.themeInfo()!;
+    assert.equal(new Set(info.themes.map((t) => t.style)).size, 3);
+    assert.equal(info.themes.length, 3);
+    assert.equal(info.theme, info.themes[0].id);
+    canvas.close();
+  }
+  {
+    const { hub, call } = await setup(fs.mkdtempSync(path.join(os.tmpdir(), 'dm-mcp-style-')));
+    const opened = await call('canvas_open', { new: true, title: '记账' });
+    const canvas = hub.get(opened.json.canvas_id);
+    canvas.clients.add({ readyState: 1, send: () => {} } as never);
+    const [card] = (await call('design_direction', {})).json.design_directions as Array<{ id: string }>;
+    const d = directionDetail(card.id)!;
+    canvas.meta.brief = { at: Date.now(), answers: [{ id: DIRECTION_Q, question: '方向', answer: d.name }, { id: 'tone', question: '明暗', answer: '深色' }] };
+    canvas.meta.direction = { id: d.id, name: d.name, signature: d.signature };
+    const pick = await call('design_direction', { pick: card.id, concept: 'c', motif: 'm' });
+    assert.ok(!pick.r.isError, pick.text);
+    assert.equal(pick.json.alternate_styles, undefined);
+    assert.equal(canvas.meta.direction?.alternates, undefined);
+    const sys = await call('design_system', { action: 'create', name: '记账' });
+    assert.ok(!sys.r.isError, sys.text);
+    assert.equal(sys.json.tweaks_themes, undefined);
+    assert.deepEqual(canvas.themeInfo()!.themes.map((t) => [t.id, t.mode]), [['dark', 'dark']]);
+    // 用户在对话里说两种都要时由 AI 传 modes
+    const both = await call('design_system', { action: 'create', name: '记账', modes: ['light', 'dark'] });
+    assert.ok(!both.r.isError, both.text);
+    assert.match(both.json.tweaks_themes, /明暗/);
+    canvas.close();
+  }
 });

@@ -3,6 +3,7 @@
 // 同时给出静态问题（跳转目标不存在、引用了未声明的变量、永远不会显示的元素）。
 import { inferRender, mergeOverride } from './doc.js';
 import { childAddress } from './render.js';
+import { hrefFrame, hrefTarget } from './links.js';
 import { evalExpr, frameVars, hasTemplate, mergeProto, truthy } from './proto.js';
 import type { DesignDoc, Frame, Node, Override, Proto, ProtoAction, ProtoValue } from './types.js';
 
@@ -77,7 +78,7 @@ export interface SimState {
   timers: Timer[];
 }
 
-export type NavOut = { kind: 'navigate'; frame: string } | { kind: 'back' } | { kind: 'open'; url: string };
+export type NavOut = { kind: 'navigate'; frame: string; canvas?: string } | { kind: 'back' } | { kind: 'open'; url: string };
 
 const cloneState = (s: SimState): SimState => ({ vars: { ...s.vars }, timers: [...s.timers] });
 
@@ -111,7 +112,7 @@ export function runActions(st: SimState, actions: ProtoAction[], depth = 0): Nav
         break;
       }
       case 'navigate':
-        return { kind: 'navigate', frame: a.frame };
+        return a.canvas ? { kind: 'navigate', frame: a.frame, canvas: a.canvas } : { kind: 'navigate', frame: a.frame };
       case 'back':
         return { kind: 'back' };
       case 'open':
@@ -130,8 +131,8 @@ function fireTimer(st: SimState, t: Timer): NavOut | undefined {
 
 function followHref(href: string): NavOut | undefined {
   if (href === '#back') return { kind: 'back' };
-  if (href.startsWith('#')) return { kind: 'navigate', frame: href.slice(1) };
-  return undefined;
+  const t = hrefTarget(href);
+  return t ? { kind: 'navigate', ...t } : undefined;
 }
 
 // ---------- 状态探索 ----------
@@ -404,7 +405,7 @@ export function lintProto(doc: DesignDoc, frameIds?: Iterable<string>): ProtoWar
           if (a.do === 'set' && a.expr) refs.push(...exprVars(a.expr));
           if (a.do === 'if') (refs.push(...exprVars(a.when)), acts(a.then), acts(a.else));
           if (a.do === 'delay' || a.do === 'countdown') acts(a.then);
-          if (a.do === 'navigate' && !ids.has(a.frame)) warn({ id: n.addr, kind: 'dead_link', detail: `navigate 指向不存在的画板 “${a.frame}”` });
+          if (a.do === 'navigate' && !a.canvas && !ids.has(a.frame)) warn({ id: n.addr, kind: 'dead_link', detail: `navigate 指向不存在的画板 “${a.frame}”` });
         }
       };
       if (p) {
@@ -415,7 +416,8 @@ export function lintProto(doc: DesignDoc, frameIds?: Iterable<string>): ProtoWar
       }
       for (const m of (n.template ?? '').matchAll(/\{\{([\s\S]+?)\}\}/g)) refs.push(...exprVars(m[1]));
       const href = n.href;
-      if (href && href.startsWith('#') && href !== '#back' && !ids.has(href.slice(1))) warn({ id: n.addr, kind: 'dead_link', detail: `href 指向不存在的画板 “${href.slice(1)}”` });
+      const local = hrefFrame(href);
+      if (local && !ids.has(local)) warn({ id: n.addr, kind: 'dead_link', detail: `href 指向不存在的画板 “${local}”` });
       for (const v of refs) if (!(v in declared)) warn({ id: n.addr, kind: 'undeclared_var', detail: `变量 “${v}” 未在画板内任何节点的 proto.vars 中声明初值` });
     }
   }
@@ -446,7 +448,7 @@ export function entryFrame(doc: DesignDoc): Frame | undefined {
   const targeted = new Set<string>();
   const acts = (from: string, l?: ProtoAction[]) => {
     for (const a of l ?? []) {
-      if (a.do === 'navigate' && a.frame !== from && ids.has(a.frame)) targeted.add(a.frame);
+      if (a.do === 'navigate' && !a.canvas && a.frame !== from && ids.has(a.frame)) targeted.add(a.frame);
       if (a.do === 'if') (acts(from, a.then), acts(from, a.else));
       if (a.do === 'delay' || a.do === 'countdown') acts(from, a.then);
     }
@@ -454,7 +456,7 @@ export function entryFrame(doc: DesignDoc): Frame | undefined {
   for (const f of pages) {
     for (const n of flattenFrame(doc, f)) {
       if (n.proto) (acts(f.id, n.proto.onClick), acts(f.id, n.proto.onLoad));
-      const to = n.href && n.href.startsWith('#') && n.href !== '#back' ? n.href.slice(1) : undefined;
+      const to = hrefFrame(n.href);
       if (to && to !== f.id && ids.has(to)) targeted.add(to);
     }
   }
